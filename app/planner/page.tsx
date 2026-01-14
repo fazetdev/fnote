@@ -1,6 +1,5 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 
 type Task = {
   id: string
@@ -18,35 +17,68 @@ type DailyPlan = {
 }
 
 export default function PlannerPage() {
-  const router = useRouter()
   const [plans, setPlans] = useState<DailyPlan[]>([])
-  const [todayPlan, setTodayPlan] = useState<DailyPlan>({
-    date: new Date().toISOString().split('T')[0],
-    focus: '',
-    tasks: []
-  })
+  const [todayPlan, setTodayPlan] = useState<DailyPlan | null>(null)
   const [newTask, setNewTask] = useState({
     text: '',
     time: '09:00',
     priority: 'medium' as Task['priority']
   })
   const [mounted, setMounted] = useState(false)
+  const [todayDate, setTodayDate] = useState<string>('')
+  const [formattedDate, setFormattedDate] = useState<string>('')
 
   useEffect(() => {
     setMounted(true)
+    
+    // Set dates on client only
+    const now = new Date()
+    const todayStr = now.toISOString().split('T')[0]
+    const formatted = now.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric'
+    })
+    
+    setTodayDate(todayStr)
+    setFormattedDate(formatted)
+    
     const savedPlans = localStorage.getItem('fnote_plans')
     if (savedPlans) {
-      const parsedPlans = JSON.parse(savedPlans)
-      setPlans(parsedPlans)
-      const today = new Date().toISOString().split('T')[0]
-      const found = parsedPlans.find((p: DailyPlan) => p.date === today)
-      if (found) setTodayPlan(found)
+      try {
+        const parsedPlans = JSON.parse(savedPlans)
+        setPlans(parsedPlans)
+        const found = parsedPlans.find((p: DailyPlan) => p.date === todayStr)
+        if (found) {
+          setTodayPlan(found)
+        } else {
+          setTodayPlan({
+            date: todayStr,
+            focus: '',
+            tasks: []
+          })
+        }
+      } catch (error) {
+        console.error('Error parsing saved plans:', error)
+        setTodayPlan({
+          date: todayStr,
+          focus: '',
+          tasks: []
+        })
+      }
+    } else {
+      setTodayPlan({
+        date: todayStr,
+        focus: '',
+        tasks: []
+      })
     }
   }, [])
 
   // Save today plan
   useEffect(() => {
-    if (!mounted) return
+    if (!mounted || !todayPlan) return
     const otherPlans = plans.filter(p => p.date !== todayPlan.date)
     const updatedPlans = [...otherPlans, todayPlan]
     setPlans(updatedPlans)
@@ -54,7 +86,7 @@ export default function PlannerPage() {
   }, [todayPlan, plans, mounted])
 
   const handleAddTask = () => {
-    if (!newTask.text.trim()) return
+    if (!newTask.text.trim() || !todayPlan) return
     const task: Task = {
       id: Date.now().toString(),
       text: newTask.text,
@@ -68,6 +100,7 @@ export default function PlannerPage() {
   }
 
   const toggleTask = (id: string) => {
+    if (!todayPlan) return
     setTodayPlan({
       ...todayPlan,
       tasks: todayPlan.tasks.map(t => t.id===id ? {...t, completed: !t.completed} : t)
@@ -75,6 +108,7 @@ export default function PlannerPage() {
   }
 
   const deleteTask = (id: string) => {
+    if (!todayPlan) return
     setTodayPlan({
       ...todayPlan,
       tasks: todayPlan.tasks.filter(t => t.id !== id)
@@ -89,11 +123,19 @@ export default function PlannerPage() {
     }
   }
 
-  const completedTasks = todayPlan.tasks.filter(t=>t.completed).length
-  const totalTasks = todayPlan.tasks.length
-  const progress = totalTasks>0 ? Math.round((completedTasks/totalTasks)*100) : 0
+  const handleBackToDashboard = () => {
+    // Use direct navigation which we know works
+    window.location.href = '/dashboard'
+  }
 
-  if (!mounted) {
+  const handleAddTaskKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleAddTask()
+    }
+  }
+
+  if (!mounted || !todayPlan) {
     return (
       <div className="min-h-screen bg-[#0f2e1f] flex items-center justify-center">
         <div className="text-white">Loading...</div>
@@ -101,9 +143,9 @@ export default function PlannerPage() {
     )
   }
 
-  const handleBackToDashboard = () => {
-    router.push('/dashboard')
-  }
+  const completedTasks = todayPlan.tasks.filter(t=>t.completed).length
+  const totalTasks = todayPlan.tasks.length
+  const progress = totalTasks>0 ? Math.round((completedTasks/totalTasks)*100) : 0
 
   return (
     <div className="min-h-screen bg-[#0f2e1f] text-white px-4 py-6">
@@ -112,17 +154,12 @@ export default function PlannerPage() {
         <div>
           <h1 className="text-2xl font-bold text-[#d4af37]">📅 Daily Planner</h1>
           <p className="text-gray-300 text-sm">
-            {new Date().toLocaleDateString('en-US', {
-              weekday: 'long', 
-              month: 'long', 
-              day: 'numeric', 
-              year: 'numeric'
-            })}
+            {formattedDate}
           </p>
         </div>
         <button
           onClick={handleBackToDashboard}
-          className="text-gray-400 hover:text-white text-sm"
+          className="px-4 py-2 bg-[#143b28] hover:bg-[#1f5a3d] text-white rounded-lg border border-[#1f5a3d] transition"
         >
           ← Back to Dashboard
         </button>
@@ -135,9 +172,9 @@ export default function PlannerPage() {
           <span className="text-[#d4af37] font-bold text-lg">{progress}%</span>
         </div>
         <div className="w-full bg-[#0f2e1f] h-2.5 rounded-full overflow-hidden">
-          <div 
-            className={`h-2.5 ${progress<30?'bg-red-500':progress<70?'bg-yellow-500':'bg-emerald-500'}`} 
-            style={{width:`${progress}%`}} 
+          <div
+            className={`h-2.5 ${progress<30?'bg-red-500':progress<70?'bg-yellow-500':'bg-emerald-500'}`}
+            style={{width:`${progress}%`}}
           />
         </div>
         <p className="text-sm text-gray-400 mt-2">
@@ -166,7 +203,7 @@ export default function PlannerPage() {
           {/* Add Task Form */}
           <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6">
             <h2 className="text-xl font-semibold mb-4 text-[#d4af37]">➕ Add Task</h2>
-            
+
             <div className="space-y-4">
               <input
                 type="text"
@@ -174,23 +211,23 @@ export default function PlannerPage() {
                 className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white placeholder-gray-400 focus:outline-none focus:border-[#d4af37]"
                 value={newTask.text}
                 onChange={e => setNewTask({...newTask, text: e.target.value})}
-                onKeyDown={e => e.key==='Enter' && handleAddTask()}
+                onKeyDown={handleAddTaskKeyPress}
               />
-              
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-gray-300 mb-2">Time</label>
-                  <input 
-                    type="time" 
+                  <input
+                    type="time"
                     className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white focus:outline-none focus:border-[#d4af37]"
                     value={newTask.time}
                     onChange={e => setNewTask({...newTask, time: e.target.value})}
                   />
                 </div>
-                
+
                 <div>
                   <label className="block text-sm text-gray-300 mb-2">Priority</label>
-                  <select 
+                  <select
                     className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white focus:outline-none focus:border-[#d4af37]"
                     value={newTask.priority}
                     onChange={e => setNewTask({...newTask, priority: e.target.value as Task['priority']})}
@@ -201,8 +238,8 @@ export default function PlannerPage() {
                   </select>
                 </div>
               </div>
-              
-              <button 
+
+              <button
                 className="w-full bg-[#d4af37] text-black py-3 rounded-lg font-medium hover:bg-[#c9a633] transition"
                 onClick={handleAddTask}
               >
@@ -232,11 +269,11 @@ export default function PlannerPage() {
                 {todayPlan.tasks
                   .sort((a, b) => a.time.localeCompare(b.time))
                   .map(task => (
-                    <div 
-                      key={task.id} 
+                    <div
+                      key={task.id}
                       className={`flex items-start p-4 rounded-lg border ${
-                        task.completed 
-                          ? 'bg-[#0f2e1f] border-[#1f5a3d]' 
+                        task.completed
+                          ? 'bg-[#0f2e1f] border-[#1f5a3d]'
                           : 'bg-[#0f2e1f] border-[#1f5a3d] hover:border-[#d4af37]'
                       } transition-colors`}
                     >
