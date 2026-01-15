@@ -1,9 +1,11 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { api } from '@/utils/api'
 
 export default function LoginPage() {
   const [password, setPassword] = useState('')
+  const [email, setEmail] = useState('faruk@example.com') // Pre-filled email
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isFingerprintLoading, setIsFingerprintLoading] = useState(false)
@@ -15,19 +17,34 @@ export default function LoginPage() {
     }
   }, [router])
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
+    setError('')
 
-    setTimeout(() => {
+    try {
+      const result = await api.login(email, password)
+      
+      localStorage.setItem('fnote_logged_in', 'true')
+      localStorage.setItem('fnote_user', JSON.stringify(result.user))
+      router.push('/dashboard')
+    } catch (error: any) {
+      console.error('Login error:', error)
+      
+      // Fallback to local password check for development
       if (password === 'fnote123' || password === '1234') {
         localStorage.setItem('fnote_logged_in', 'true')
+        localStorage.setItem('fnote_user', JSON.stringify({
+          id: 'mock-user-id',
+          email: 'test@example.com',
+          createdAt: new Date().toISOString()
+        }))
         router.push('/dashboard')
       } else {
-        setError('Incorrect')
+        setError(error.message || 'Login failed. Please try again.')
         setIsLoading(false)
       }
-    }, 200)
+    }
   }
 
   const handleFingerprint = async () => {
@@ -56,6 +73,12 @@ export default function LoginPage() {
       if (credential) {
         // Fingerprint successful
         localStorage.setItem('fnote_logged_in', 'true')
+        // For mock authentication
+        localStorage.setItem('fnote_user', JSON.stringify({
+          id: 'mock-user-id',
+          email: 'test@example.com',
+          createdAt: new Date().toISOString()
+        }))
         router.push('/dashboard')
       } else {
         setError('Fingerprint failed')
@@ -92,6 +115,14 @@ export default function LoginPage() {
         <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6 shadow-lg">
           <form onSubmit={handleLogin} className="space-y-4">
             <input
+              type="email"
+              value={email}
+              onChange={e => { setEmail(e.target.value); setError('') }}
+              placeholder="Email"
+              className="w-full rounded-md bg-[#0f2e1f] border border-[#1f5a3d] px-3 py-3 text-sm text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#d4af37]"
+              disabled={isLoading || isFingerprintLoading}
+            />
+            <input
               type="password"
               value={password}
               onChange={e => { setPassword(e.target.value); setError('') }}
@@ -108,7 +139,7 @@ export default function LoginPage() {
               disabled={isLoading || isFingerprintLoading}
               className="w-full rounded-md bg-[#d4af37] text-black py-3 text-sm font-medium hover:bg-[#c9a633] disabled:opacity-60"
             >
-              {isLoading ? '...' : 'Log in'}
+              {isLoading ? 'Logging in...' : 'Log in'}
             </button>
           </form>
 

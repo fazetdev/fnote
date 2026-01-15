@@ -1,16 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-// Mock user ID for development
-const MOCK_USER_ID = 'mock-user-id'
+async function getAuthenticatedUser(request: NextRequest) {
+  try {
+    // Check for user in localStorage via request headers or cookies
+    // For now, we'll use a simplified approach
+    const userData = request.headers.get('x-user-data')
+    
+    if (userData) {
+      return JSON.parse(userData)
+    }
 
-async function getAuthenticatedUser() {
-  // TODO: Implement real authentication
-  return { id: MOCK_USER_ID, email: 'test@example.com' }
+    // In production, check actual authentication
+    // For demo, return mock user
+    return { id: 'mock-user-id', email: 'test@example.com' }
+  } catch (error) {
+    return null
+  }
 }
 
 export async function GET(request: NextRequest) {
   try {
-    const user = await getAuthenticatedUser()
+    const user = await getAuthenticatedUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -64,7 +74,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await getAuthenticatedUser()
+    const user = await getAuthenticatedUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -121,7 +131,7 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const user = await getAuthenticatedUser()
+    const user = await getAuthenticatedUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -194,7 +204,7 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const user = await getAuthenticatedUser()
+    const user = await getAuthenticatedUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
