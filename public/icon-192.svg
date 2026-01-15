@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="192" height="192" viewBox="0 0 192 192" xmlns="http://www.w3.org/2000/svg">
+  <rect width="192" height="192" fill="#0f2e1f"/>
+  <path d="M96 48L48 96V144H144V96L96 48Z" fill="#d4af37"/>
+  <path d="M96 60L60 96V132H132V96L96 60Z" fill="#1f5a3d"/>
+  <text x="96" y="112" font-family="Arial" font-size="22" fill="#d4af37" text-anchor="middle" dy=".3em">F</text>
+</svg>

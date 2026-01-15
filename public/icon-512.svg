@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" fill="#0f2e1f"/>
+  <path d="M256 128L128 256V384H384V256L256 128Z" fill="#d4af37"/>
+  <path d="M256 160L160 256V352H352V256L256 160Z" fill="#1f5a3d"/>
+  <text x="256" y="300" font-family="Arial" font-size="60" fill="#d4af37" text-anchor="middle" dy=".3em">F</text>
+</svg>
