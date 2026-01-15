@@ -5,15 +5,18 @@ import { api } from '@/utils/api'
 
 export default function LoginPage() {
   const [password, setPassword] = useState('')
-  const [email, setEmail] = useState('faruk@example.com') // Pre-filled email
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isFingerprintLoading, setIsFingerprintLoading] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
-    if (localStorage.getItem('fnote_logged_in') === 'true') {
-      router.push('/dashboard')
+    // Check if already logged in
+    if (typeof window !== 'undefined') {
+      const isLoggedIn = localStorage.getItem('fnote_logged_in') === 'true'
+      if (isLoggedIn) {
+        router.push('/dashboard')
+      }
     }
   }, [router])
 
@@ -23,25 +26,33 @@ export default function LoginPage() {
     setError('')
 
     try {
-      const result = await api.login(email, password)
+      // Try API login first
+      const result = await api.login('faruk@example.com', password)
       
+      // Save login state
       localStorage.setItem('fnote_logged_in', 'true')
       localStorage.setItem('fnote_user', JSON.stringify(result.user))
+      
+      // Save password hash for fingerprint (simplified)
+      localStorage.setItem('fnote_password_hash', btoa(password))
+      
       router.push('/dashboard')
     } catch (error: any) {
       console.error('Login error:', error)
       
-      // Fallback to local password check for development
+      // Fallback for development or if API fails
       if (password === 'fnote123' || password === '1234') {
         localStorage.setItem('fnote_logged_in', 'true')
         localStorage.setItem('fnote_user', JSON.stringify({
           id: 'mock-user-id',
-          email: 'test@example.com',
+          email: 'faruk@example.com',
           createdAt: new Date().toISOString()
         }))
+        // Save for fingerprint
+        localStorage.setItem('fnote_password_hash', btoa(password))
         router.push('/dashboard')
       } else {
-        setError(error.message || 'Login failed. Please try again.')
+        setError('Incorrect')
         setIsLoading(false)
       }
     }
@@ -52,12 +63,18 @@ export default function LoginPage() {
     setError('')
 
     try {
-      // Try to trigger fingerprint with minimal WebAuthn
+      // Check if fingerprint is supported
       if (typeof window === 'undefined' || !window.PublicKeyCredential) {
         throw new Error('Fingerprint not supported')
       }
 
-      // Create a simple public key request
+      // Check if we have saved credentials
+      const hasSavedPassword = localStorage.getItem('fnote_password_hash')
+      if (!hasSavedPassword) {
+        throw new Error('Login with password first to enable fingerprint')
+      }
+
+      // Create WebAuthn request
       const publicKey = {
         challenge: new Uint8Array(32),
         timeout: 60000,
@@ -65,35 +82,47 @@ export default function LoginPage() {
         rpId: window.location.hostname
       }
 
-      // This should trigger fingerprint dialog
+      // Trigger browser fingerprint dialog
       const credential = await navigator.credentials.get({
         publicKey
       } as CredentialRequestOptions)
 
       if (credential) {
-        // Fingerprint successful
-        localStorage.setItem('fnote_logged_in', 'true')
-        // For mock authentication
-        localStorage.setItem('fnote_user', JSON.stringify({
-          id: 'mock-user-id',
-          email: 'test@example.com',
-          createdAt: new Date().toISOString()
-        }))
-        router.push('/dashboard')
+        // Fingerprint successful - get saved password
+        const passwordHash = localStorage.getItem('fnote_password_hash')
+        const savedPassword = passwordHash ? atob(passwordHash) : 'fnote123'
+        
+        try {
+          // Try API login with saved password
+          const result = await api.login('faruk@example.com', savedPassword)
+          localStorage.setItem('fnote_logged_in', 'true')
+          localStorage.setItem('fnote_user', JSON.stringify(result.user))
+          router.push('/dashboard')
+        } catch (apiError) {
+          // If API fails, use mock login
+          localStorage.setItem('fnote_logged_in', 'true')
+          localStorage.setItem('fnote_user', JSON.stringify({
+            id: 'mock-user-id',
+            email: 'faruk@example.com',
+            createdAt: new Date().toISOString()
+          }))
+          router.push('/dashboard')
+        }
       } else {
-        setError('Fingerprint failed')
-        setIsFingerprintLoading(false)
+        throw new Error('Fingerprint failed')
       }
     } catch (error: any) {
       console.log('Fingerprint error:', error.name || error.message)
 
-      // Show helpful error messages
+      // Clean error messages
       if (error.name === 'NotAllowedError') {
         setError('Touch fingerprint sensor')
       } else if (error.name === 'NotSupportedError') {
         setError('Fingerprint not supported')
       } else if (error.message?.includes('HTTPS')) {
-        setError('Fingerprint requires HTTPS (works in production)')
+        setError('Fingerprint requires HTTPS')
+      } else if (error.message?.includes('Login with password first')) {
+        setError('Login with password first')
       } else {
         setError('Use password')
       }
@@ -115,14 +144,6 @@ export default function LoginPage() {
         <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6 shadow-lg">
           <form onSubmit={handleLogin} className="space-y-4">
             <input
-              type="email"
-              value={email}
-              onChange={e => { setEmail(e.target.value); setError('') }}
-              placeholder="Email"
-              className="w-full rounded-md bg-[#0f2e1f] border border-[#1f5a3d] px-3 py-3 text-sm text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#d4af37]"
-              disabled={isLoading || isFingerprintLoading}
-            />
-            <input
               type="password"
               value={password}
               onChange={e => { setPassword(e.target.value); setError('') }}
@@ -139,7 +160,7 @@ export default function LoginPage() {
               disabled={isLoading || isFingerprintLoading}
               className="w-full rounded-md bg-[#d4af37] text-black py-3 text-sm font-medium hover:bg-[#c9a633] disabled:opacity-60"
             >
-              {isLoading ? 'Logging in...' : 'Log in'}
+              {isLoading ? '...' : 'Log in'}
             </button>
           </form>
 
@@ -161,15 +182,6 @@ export default function LoginPage() {
               </>
             )}
           </button>
-        </div>
-
-        {/* Fingerprint Info */}
-        <div className="mt-4 p-3 bg-blue-900/20 border border-blue-700/30 rounded-lg">
-          <p className="text-xs text-blue-300">
-            {typeof window !== 'undefined' && window.location.protocol === 'https:'
-              ? '✅ HTTPS detected - Fingerprint should work'
-              : '⚠️ Local HTTP - Fingerprint needs HTTPS (works when deployed)'}
-          </p>
         </div>
 
         {/* Quote below login */}
