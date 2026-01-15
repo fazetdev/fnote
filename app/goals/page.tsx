@@ -55,7 +55,7 @@ export default function GoalsPage() {
   const getParentOptions = (goalType: GoalType) => {
     const typeIndex = goalTypes.findIndex(t => t.id === goalType)
     if (typeIndex === 0) return []
-    
+
     const parentType = goalTypes[typeIndex - 1].id
     return goals.filter(goal => goal.type === parentType)
   }
@@ -64,14 +64,14 @@ export default function GoalsPage() {
   const calculateProgressFromChildren = (parentId: string): number => {
     const children = goals.filter(goal => goal.parentId === parentId)
     if (children.length === 0) return 0
-    
+
     const totalProgress = children.reduce((sum, child) => sum + child.progress, 0)
     return Math.round(totalProgress / children.length)
   }
 
   const handleAddGoal = () => {
     if (!newGoal.title.trim()) return
-    
+
     // Determine period label
     let periodLabel = ''
     if (newGoal.type === 'yearly') {
@@ -87,7 +87,13 @@ export default function GoalsPage() {
       const weekNumber = Math.ceil(date.getDate() / 7)
       periodLabel = `Week ${weekNumber}`
     }
-    
+
+    const getStatusFromProgress = (progress: number): GoalStatus => {
+      if (progress === 0) return 'not-started'
+      if (progress === 100) return 'completed'
+      return 'in-progress'
+    }
+
     const goal: Goal = {
       id: Date.now().toString(),
       title: newGoal.title,
@@ -95,21 +101,21 @@ export default function GoalsPage() {
       type: newGoal.type,
       targetDate: newGoal.targetDate,
       progress: newGoal.progress,
-      status: newGoal.progress === 0 ? 'not-started' : newGoal.progress === 100 ? 'completed' : 'in-progress',
+      status: getStatusFromProgress(newGoal.progress),
       parentId: newGoal.parentId,
       periodLabel,
       createdAt: new Date()
     }
-    
+
     const updatedGoals = [goal, ...goals]
     setGoals(updatedGoals)
     saveGoalsToStorage(updatedGoals)
-    
+
     // Update parent progress
     if (goal.parentId) {
       updateParentProgress(goal.parentId, updatedGoals)
     }
-    
+
     // Reset form
     setNewGoal({ 
       title: '', 
@@ -139,7 +145,13 @@ export default function GoalsPage() {
 
   const handleUpdateGoal = () => {
     if (!editingGoal || !newGoal.title.trim()) return
-    
+
+    const getStatusFromProgress = (progress: number): GoalStatus => {
+      if (progress === 0) return 'not-started'
+      if (progress === 100) return 'completed'
+      return 'in-progress'
+    }
+
     const updatedGoal: Goal = {
       ...editingGoal,
       title: newGoal.title,
@@ -147,22 +159,22 @@ export default function GoalsPage() {
       type: newGoal.type,
       targetDate: newGoal.targetDate,
       progress: newGoal.progress,
-      status: newGoal.progress === 0 ? 'not-started' : newGoal.progress === 100 ? 'completed' : 'in-progress',
+      status: getStatusFromProgress(newGoal.progress),
       parentId: newGoal.parentId
     }
-    
+
     const updatedGoals = goals.map(goal => 
       goal.id === editingGoal.id ? updatedGoal : goal
     )
-    
+
     setGoals(updatedGoals)
     saveGoalsToStorage(updatedGoals)
-    
+
     // Update parent progress
     if (updatedGoal.parentId) {
       updateParentProgress(updatedGoal.parentId, updatedGoals)
     }
-    
+
     setEditingGoal(null)
     setNewGoal({ 
       title: '', 
@@ -177,14 +189,21 @@ export default function GoalsPage() {
 
   const updateParentProgress = (parentId: string, goalsList: Goal[]) => {
     const parentProgress = calculateProgressFromChildren(parentId)
+    
+    const getStatusFromProgress = (progress: number): GoalStatus => {
+      if (progress === 0) return 'not-started'
+      if (progress === 100) return 'completed'
+      return 'in-progress'
+    }
+    
     const updated = goalsList.map(g => 
       g.id === parentId 
-        ? { ...g, progress: parentProgress, status: parentProgress === 0 ? 'not-started' : parentProgress === 100 ? 'completed' : 'in-progress' }
+        ? { ...g, progress: parentProgress, status: getStatusFromProgress(parentProgress) }
         : g
     )
     setGoals(updated)
     saveGoalsToStorage(updated)
-    
+
     // Recursively update grandparent
     const parent = updated.find(g => g.id === parentId)
     if (parent?.parentId) {
@@ -194,7 +213,7 @@ export default function GoalsPage() {
 
   const handleDeleteGoal = (id: string) => {
     const goalToDelete = goals.find(g => g.id === id)
-    
+
     // Delete goal and all its children
     const deleteRecursive = (goalId: string): string[] => {
       const toDelete = [goalId]
@@ -204,18 +223,18 @@ export default function GoalsPage() {
       }
       return toDelete
     }
-    
+
     const idsToDelete = deleteRecursive(id)
     const updatedGoals = goals.filter(goal => !idsToDelete.includes(goal.id))
-    
+
     setGoals(updatedGoals)
     saveGoalsToStorage(updatedGoals)
-    
+
     // Update parent progress if exists
     if (goalToDelete?.parentId) {
       updateParentProgress(goalToDelete.parentId, updatedGoals)
     }
-    
+
     if (editingGoal?.id === id) {
       setEditingGoal(null)
       setNewGoal({ 
@@ -227,24 +246,30 @@ export default function GoalsPage() {
         parentId: null
       })
     }
-    
+
     if (expandedGoalId === id) setExpandedGoalId(null)
   }
 
   const updateProgress = (id: string, newProgress: number) => {
+    const getStatusFromProgress = (progress: number): GoalStatus => {
+      if (progress === 0) return 'not-started'
+      if (progress === 100) return 'completed'
+      return 'in-progress'
+    }
+    
     const updated = goals.map(goal =>
       goal.id === id
         ? { 
             ...goal, 
             progress: newProgress, 
-            status: newProgress === 0 ? 'not-started' : newProgress === 100 ? 'completed' : 'in-progress' 
+            status: getStatusFromProgress(newProgress)
           }
         : goal
     )
-    
+
     setGoals(updated)
     saveGoalsToStorage(updated)
-    
+
     // Update parent and ancestors
     const goal = updated.find(g => g.id === id)
     if (goal?.parentId) {
@@ -280,7 +305,7 @@ export default function GoalsPage() {
     const childGoals = getChildGoals(goal.id)
     const isExpanded = expandedGoalId === goal.id
     const canAddChild = typeInfo?.childType !== null
-    
+
     return (
       <div className={`mb-3 ${depth > 0 ? 'ml-6' : ''}`}>
         {/* Goal Card */}
@@ -293,7 +318,7 @@ export default function GoalsPage() {
               <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${typeInfo?.color}`}>
                 <span className="text-lg">{typeInfo?.emoji}</span>
               </div>
-              
+
               <div className="flex-1">
                 <h3 className="font-semibold text-white">{goal.title}</h3>
                 <div className="flex items-center gap-3 text-sm text-gray-300 mt-1">
@@ -303,314 +328,353 @@ export default function GoalsPage() {
                 </div>
               </div>
             </div>
-
-            {/* Progress Display */}
+            
             <div className="flex items-center gap-4">
-              <div className="text-right">
-                <div className="text-[#d4af37] font-medium text-lg">{goal.progress}%</div>
-                <div className="text-xs text-gray-400">{goal.status.replace('-', ' ')}</div>
+              <div className="flex flex-col items-end">
+                <div className="text-right">
+                  <span className="text-lg font-bold text-[#d4af37]">{goal.progress}%</span>
+                </div>
+                <div className="w-32 h-2 bg-[#0f2e1f] rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-[#d4af37]"
+                    style={{ width: `${goal.progress}%` }}
+                  />
+                </div>
               </div>
-              <div className="text-gray-400">
-                {isExpanded ? '▲' : '▼'}
-              </div>
-            </div>
-          </div>
-
-          {/* Progress Bar */}
-          <div className="mt-3">
-            <div className="w-full bg-[#0f2e1f] h-2 rounded-full overflow-hidden">
-              <div
-                className={`h-2 ${goal.progress < 30 ? 'bg-red-500' : goal.progress < 70 ? 'bg-yellow-500' : 'bg-emerald-500'}`}
-                style={{ width: `${goal.progress}%` }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Expanded Details */}
-        {isExpanded && (
-          <div className="bg-[#0f2e1f] border border-[#1f5a3d] rounded-lg p-4 mt-2">
-            {/* Description */}
-            {goal.description && (
-              <div className="mb-4">
-                <h4 className="text-sm font-medium text-[#d4af37] mb-2">Description</h4>
-                <p className="text-gray-300">{goal.description}</p>
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <div className="text-gray-400">Target Date</div>
-                <div className="text-white">{new Date(goal.targetDate).toLocaleDateString()}</div>
-              </div>
-              <div>
-                <div className="text-gray-400">Created</div>
-                <div className="text-white">{new Date(goal.createdAt).toLocaleDateString()}</div>
-              </div>
-            </div>
-
-            {/* Progress Slider */}
-            <div className="mt-4">
-              <div className="flex justify-between text-sm mb-2">
-                <span className="text-gray-300">Adjust Progress</span>
-                <span className="text-[#d4af37] font-medium">{goal.progress}%</span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={goal.progress}
-                onChange={(e) => updateProgress(goal.id, parseInt(e.target.value))}
-                className="w-full"
-              />
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-[#1f5a3d]">
-              {canAddChild && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    const childType = typeInfo!.childType!
-                    setNewGoal({
-                      title: '',
-                      description: '',
-                      type: childType,
-                      targetDate: goal.targetDate,
-                      progress: 0,
-                      parentId: goal.id
-                    })
-                    setSelectedParent(goal.id)
-                  }}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm transition"
-                >
-                  Add {goalTypes.find(t => t.id === typeInfo!.childType)?.name}
-                </button>
-              )}
+              
               <button
                 onClick={(e) => {
                   e.stopPropagation()
                   handleEditGoal(goal)
                 }}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm transition"
+                className="px-3 py-1 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg border border-blue-500/30 text-sm transition"
               >
                 Edit
               </button>
+              
               <button
                 onClick={(e) => {
                   e.stopPropagation()
-                  handleDeleteGoal(goal.id)
+                  if (confirm(`Delete "${goal.title}" and all its sub-goals?`)) {
+                    handleDeleteGoal(goal.id)
+                  }
                 }}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm transition"
+                className="px-3 py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg border border-red-500/30 text-sm transition"
               >
                 Delete
               </button>
             </div>
+          </div>
 
-            {/* Child Goals */}
-            {childGoals.length > 0 && (
-              <div className="mt-4 pt-4 border-t border-[#1f5a3d]">
-                <h4 className="text-sm font-medium text-[#d4af37] mb-3">
-                  {typeInfo?.childType?.toUpperCase()} GOALS
-                </h4>
-                <div className="space-y-3">
-                  {childGoals.map(child => (
-                    <GoalCard key={child.id} goal={child} depth={depth + 1} />
-                  ))}
-                </div>
-              </div>
-            )}
+          {goal.description && (
+            <p className="text-gray-300 text-sm mt-3">{goal.description}</p>
+          )}
+
+          <div className="flex items-center justify-between mt-4">
+            <div className="flex items-center gap-2">
+              <span className={`text-xs px-2 py-1 rounded-full border ${getStatusColor(goal.status)}`}>
+                {goal.status}
+              </span>
+              <span className="text-xs text-gray-400">
+                Target: {new Date(goal.targetDate).toLocaleDateString()}
+              </span>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-400">
+                {childGoals.length} child{childGoals.length !== 1 ? 'ren' : ''}
+              </span>
+              <span className="text-gray-500">
+                {isExpanded ? '▲' : '▼'}
+              </span>
+            </div>
+          </div>
+
+          {/* Progress Slider */}
+          <div className="mt-4 flex items-center gap-3">
+            <span className="text-sm text-gray-300">Progress:</span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={goal.progress}
+              onChange={(e) => {
+                e.stopPropagation()
+                updateProgress(goal.id, parseInt(e.target.value))
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1"
+            />
+            <span className="text-sm text-gray-300 w-10 text-right">
+              {goal.progress}%
+            </span>
+          </div>
+        </div>
+
+        {/* Child Goals */}
+        {isExpanded && childGoals.length > 0 && (
+          <div className="mt-2">
+            {childGoals.map(child => (
+              <GoalCard key={child.id} goal={child} depth={depth + 1} />
+            ))}
           </div>
         )}
       </div>
     )
   }
 
+  const handleBackToDashboard = () => {
+    window.location.href = '/dashboard'
+  }
+
   return (
     <div className="min-h-screen bg-[#0f2e1f] text-white px-4 py-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-[#d4af37]">🎯 Goals</h1>
-          <p className="text-gray-300 text-sm">Track your progress hierarchically</p>
+          <p className="text-gray-300 text-sm">
+            Set and track your goals hierarchically
+          </p>
         </div>
         <button
-          onClick={() => router.push('/dashboard')}
-          className="text-gray-400 hover:text-white text-sm"
+          onClick={handleBackToDashboard}
+          className="px-4 py-2 bg-[#143b28] hover:bg-[#1f5a3d] text-white rounded-lg border border-[#1f5a3d] transition"
         >
           ← Back to Dashboard
         </button>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-6">
-        {/* Left: Goal Form */}
+        {/* Left: Add Goal Form */}
         <div className="lg:w-1/3">
-          <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6">
+          <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6 mb-6">
             <h2 className="text-xl font-semibold mb-4 text-[#d4af37]">
-              {editingGoal ? '✏️ Edit Goal' : '➕ Add Goal'}
+              {editingGoal ? '✏️ Edit Goal' : '➕ Add New Goal'}
             </h2>
-            
+
             <div className="space-y-4">
               <input
                 type="text"
-                placeholder="Goal Title"
-                value={newGoal.title}
-                onChange={(e) => setNewGoal({ ...newGoal, title: e.target.value })}
+                placeholder="Goal title"
                 className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white placeholder-gray-400 focus:outline-none focus:border-[#d4af37]"
+                value={newGoal.title}
+                onChange={e => setNewGoal({...newGoal, title: e.target.value})}
               />
 
-              {/* Goal Type */}
+              <textarea
+                placeholder="Description (optional)"
+                rows={3}
+                className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white placeholder-gray-400 focus:outline-none focus:border-[#d4af37]"
+                value={newGoal.description}
+                onChange={e => setNewGoal({...newGoal, description: e.target.value})}
+              />
+
               <div>
                 <label className="block text-sm text-gray-300 mb-2">Type</label>
                 <div className="grid grid-cols-2 gap-2">
-                  {goalTypes.map((type) => (
+                  {goalTypes.map(type => (
                     <button
                       key={type.id}
                       type="button"
-                      onClick={() => {
-                        setNewGoal({...newGoal, type: type.id, parentId: null})
-                        setSelectedParent(null)
-                      }}
-                      className={`p-3 rounded-lg border flex flex-col items-center ${newGoal.type === type.id ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-[#1f5a3d] bg-[#0f2e1f] hover:bg-[#1f5a3d]'}`}
+                      onClick={() => setNewGoal({...newGoal, type: type.id})}
+                      className={`px-3 py-2 rounded-lg border text-sm transition ${
+                        newGoal.type === type.id
+                          ? 'bg-[#0f2e1f] border-[#d4af37] text-white'
+                          : 'bg-[#0f2e1f] border-[#1f5a3d] text-gray-400 hover:border-gray-500'
+                      }`}
                     >
-                      <span className="text-xl">{type.emoji}</span>
-                      <span className="text-xs mt-1 text-gray-300">{type.name}</span>
+                      {type.emoji} {type.name}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Parent Selection */}
-              {newGoal.type !== 'yearly' && getParentOptions(newGoal.type).length > 0 && (
+              <div>
+                <label className="block text-sm text-gray-300 mb-2">Target Date</label>
+                <input
+                  type="date"
+                  className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white focus:outline-none focus:border-[#d4af37]"
+                  value={newGoal.targetDate}
+                  onChange={e => setNewGoal({...newGoal, targetDate: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-300 mb-2">Initial Progress (%)</label>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={newGoal.progress}
+                  onChange={e => setNewGoal({...newGoal, progress: parseInt(e.target.value)})}
+                  className="w-full"
+                />
+                <div className="flex justify-between text-sm text-gray-400 mt-1">
+                  <span>0%</span>
+                  <span>{newGoal.progress}%</span>
+                  <span>100%</span>
+                </div>
+              </div>
+
+              {newGoal.type !== 'yearly' && (
                 <div>
-                  <label className="block text-sm text-gray-300 mb-2">
-                    Parent Goal (Optional)
-                  </label>
+                  <label className="block text-sm text-gray-300 mb-2">Parent Goal (optional)</label>
                   <select
-                    value={selectedParent || ''}
-                    onChange={(e) => {
-                      const parentId = e.target.value || null
-                      setSelectedParent(parentId)
-                      setNewGoal({...newGoal, parentId})
-                    }}
                     className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white focus:outline-none focus:border-[#d4af37]"
+                    value={selectedParent || ''}
+                    onChange={e => {
+                      const value = e.target.value
+                      setSelectedParent(value || null)
+                      setNewGoal({...newGoal, parentId: value || null})
+                    }}
                   >
-                    <option value="">None (standalone)</option>
+                    <option value="">No parent</option>
                     {getParentOptions(newGoal.type).map(parent => (
                       <option key={parent.id} value={parent.id}>
-                        {parent.title} ({parent.type})
+                        {parent.title} ({parent.periodLabel})
                       </option>
                     ))}
                   </select>
                 </div>
               )}
 
-              <input
-                type="date"
-                value={newGoal.targetDate}
-                onChange={(e) => setNewGoal({ ...newGoal, targetDate: e.target.value })}
-                className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white focus:outline-none focus:border-[#d4af37]"
-              />
-
-              <textarea
-                placeholder="Description (Optional)"
-                value={newGoal.description}
-                onChange={(e) => setNewGoal({ ...newGoal, description: e.target.value })}
-                rows={3}
-                className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white placeholder-gray-400 focus:outline-none focus:border-[#d4af37]"
-              />
-
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-300">Progress</span>
-                  <span className="text-[#d4af37] font-medium">{newGoal.progress}%</span>
-                </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={newGoal.progress}
-                  onChange={(e) => setNewGoal({ ...newGoal, progress: parseInt(e.target.value) })}
-                  className="w-full"
-                />
+              <div className="flex gap-3">
+                {editingGoal ? (
+                  <>
+                    <button
+                      className="flex-1 bg-[#d4af37] text-black py-3 rounded-lg font-medium hover:bg-[#c9a633] transition"
+                      onClick={handleUpdateGoal}
+                    >
+                      Update Goal
+                    </button>
+                    <button
+                      className="px-4 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition"
+                      onClick={() => {
+                        setEditingGoal(null)
+                        setNewGoal({ 
+                          title: '', 
+                          description: '', 
+                          type: 'yearly', 
+                          targetDate: new Date().toISOString().split('T')[0], 
+                          progress: 0,
+                          parentId: null
+                        })
+                        setSelectedParent(null)
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="w-full bg-[#d4af37] text-black py-3 rounded-lg font-medium hover:bg-[#c9a633] transition"
+                    onClick={handleAddGoal}
+                  >
+                    Add Goal
+                  </button>
+                )}
               </div>
+            </div>
+          </div>
 
-              {editingGoal ? (
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleUpdateGoal}
-                    className="flex-1 bg-[#d4af37] text-black py-3 rounded-lg font-medium hover:bg-[#c9a633] transition"
-                  >
-                    Update
-                  </button>
-                  <button
-                    onClick={() => {
-                      setEditingGoal(null)
-                      setNewGoal({ 
-                        title: '', 
-                        description: '', 
-                        type: 'yearly', 
-                        targetDate: new Date().toISOString().split('T')[0], 
-                        progress: 0,
-                        parentId: null
-                      })
-                      setSelectedParent(null)
-                    }}
-                    className="px-4 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition"
-                  >
-                    Cancel
-                  </button>
+          {/* Stats */}
+          <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6">
+            <h2 className="text-xl font-semibold mb-4 text-[#d4af37]">📊 Stats</h2>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="text-center">
+                <div className="text-3xl font-bold text-[#d4af37]">{goals.length}</div>
+                <div className="text-sm text-gray-300">Total Goals</div>
+              </div>
+              <div className="text-center">
+                <div className="text-3xl font-bold text-emerald-400">
+                  {goals.filter(g => g.status === 'completed').length}
                 </div>
-              ) : (
-                <button
-                  onClick={handleAddGoal}
-                  className="w-full bg-[#d4af37] text-black py-3 rounded-lg font-medium hover:bg-[#c9a633] transition"
-                >
-                  Save Goal
-                </button>
-              )}
+                <div className="text-sm text-gray-300">Completed</div>
+              </div>
+              <div className="text-center">
+                <div className="text-3xl font-bold text-blue-400">
+                  {goals.filter(g => g.status === 'in-progress').length}
+                </div>
+                <div className="text-sm text-gray-300">In Progress</div>
+              </div>
+              <div className="text-center">
+                <div className="text-3xl font-bold text-gray-400">
+                  {goals.filter(g => g.status === 'not-started').length}
+                </div>
+                <div className="text-sm text-gray-300">Not Started</div>
+              </div>
             </div>
           </div>
         </div>
 
         {/* Right: Goals List */}
         <div className="lg:w-2/3">
-          {/* Type Filter */}
-          <div className="mb-6">
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => setActiveType('all')}
-                className={`px-4 py-2 rounded-lg ${activeType === 'all' ? 'bg-[#d4af37] text-black' : 'bg-[#143b28] text-white border border-[#1f5a3d]'}`}
-              >
-                All Goals
-              </button>
-              {goalTypes.map((type) => (
+          <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6 mb-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-semibold text-[#d4af37]">🎯 Your Goals</h2>
+              <div className="flex gap-2">
                 <button
-                  key={type.id}
-                  onClick={() => setActiveType(type.id)}
-                  className={`px-4 py-2 rounded-lg flex items-center gap-2 ${activeType === type.id ? type.color.replace('bg-', 'bg-').replace('text-', 'text-') : 'bg-[#143b28] text-gray-300 border border-[#1f5a3d]'}`}
+                  onClick={() => setActiveType('all')}
+                  className={`px-3 py-1 rounded-lg text-sm transition ${
+                    activeType === 'all'
+                      ? 'bg-[#d4af37] text-black'
+                      : 'bg-[#0f2e1f] border border-[#1f5a3d] text-gray-300 hover:border-gray-500'
+                  }`}
                 >
-                  <span>{type.emoji}</span>
-                  <span>{type.name}</span>
+                  All
                 </button>
-              ))}
+                {goalTypes.map(type => (
+                  <button
+                    key={type.id}
+                    onClick={() => setActiveType(type.id)}
+                    className={`px-3 py-1 rounded-lg text-sm transition ${
+                      activeType === type.id
+                        ? 'bg-[#d4af37] text-black'
+                        : 'bg-[#0f2e1f] border border-[#1f5a3d] text-gray-300 hover:border-gray-500'
+                    }`}
+                  >
+                    {type.emoji} {type.name}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
 
-          {/* Goals List */}
-          <div>
             {filteredGoals.length === 0 ? (
-              <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-8 text-center">
-                <p className="text-gray-300">No goals yet</p>
-                <p className="text-gray-400 text-sm mt-1">Create your first goal</p>
+              <div className="text-center py-12">
+                <p className="text-gray-300 mb-2">No goals yet</p>
+                <p className="text-sm text-gray-400">Add your first goal using the form on the left</p>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div>
                 {filteredGoals.map(goal => (
                   <GoalCard key={goal.id} goal={goal} />
                 ))}
               </div>
             )}
+          </div>
+
+          {/* Tips */}
+          <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6">
+            <h3 className="text-lg font-semibold text-[#d4af37] mb-3">💡 Tips</h3>
+            <ul className="text-gray-300 space-y-2">
+              <li className="flex items-start gap-2">
+                <span className="text-[#d4af37]">•</span>
+                <span>Break down yearly goals into quarterly/monthly/weekly sub-goals</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-[#d4af37]">•</span>
+                <span>Parent goals automatically update progress based on children</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-[#d4af37]">•</span>
+                <span>Use progress sliders to track completion percentage</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-[#d4af37]">•</span>
+                <span>Delete a parent goal to remove all its children</span>
+              </li>
+            </ul>
           </div>
         </div>
       </div>

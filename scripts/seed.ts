@@ -16,11 +16,12 @@ async function main() {
   await prisma.note.deleteMany()
   await prisma.user.deleteMany()
   
-  // Create test user
+  // Create test user with hashed password
+  const hashedPassword = await hash('fnote123', 12)
   const user = await prisma.user.create({
     data: {
       email: 'test@example.com',
-      password: 'hashed_password_here', // In production, use bcrypt
+      password: hashedPassword,
     },
   })
   
