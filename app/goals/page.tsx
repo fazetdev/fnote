@@ -1,6 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { api } from '@/utils/api'
+import { syncService } from '@/utils/sync'
 
 type GoalType = 'yearly' | 'quarterly' | 'monthly' | 'weekly'
 type GoalStatus = 'not-started' | 'in-progress' | 'completed'
@@ -16,6 +18,7 @@ interface Goal {
   parentId: string | null
   periodLabel: string
   createdAt: Date
+  children?: Goal[]
 }
 
 export default function GoalsPage() {
@@ -27,12 +30,16 @@ export default function GoalsPage() {
     type: 'yearly' as GoalType,
     targetDate: new Date().toISOString().split('T')[0],
     progress: 0,
-    parentId: null as string | null
+    parentId: null as string | null,
+    periodLabel: ''
   })
   const [activeType, setActiveType] = useState<GoalType | 'all'>('all')
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null)
   const [selectedParent, setSelectedParent] = useState<string | null>(null)
   const [expandedGoalId, setExpandedGoalId] = useState<string | null>(null)
+  const [isOnline, setIsOnline] = useState(true)
+  const [pendingSyncs, setPendingSyncs] = useState(0)
+  const [loading, setLoading] = useState(true)
 
   const goalTypes: { id: GoalType; name: string; emoji: string; color: string; childType: GoalType | null }[] = [
     { id: 'yearly', name: 'Yearly', emoji: '📅', color: 'bg-purple-600/20 border-purple-500/30 text-purple-400', childType: 'quarterly' },
@@ -41,92 +48,164 @@ export default function GoalsPage() {
     { id: 'weekly', name: 'Weekly', emoji: '🗓️', color: 'bg-amber-600/20 border-amber-500/30 text-amber-400', childType: null },
   ]
 
-  // Load from localStorage
+  // Check online status and load goals
   useEffect(() => {
-    const savedGoals = localStorage.getItem('fnote_goals')
-    if (savedGoals) setGoals(JSON.parse(savedGoals))
+    const checkOnlineStatus = () => setIsOnline(navigator.onLine)
+    checkOnlineStatus()
+    
+    window.addEventListener('online', checkOnlineStatus)
+    window.addEventListener('offline', checkOnlineStatus)
+
+    loadGoals()
+    checkPendingSyncs()
+
+    return () => {
+      window.removeEventListener('online', checkOnlineStatus)
+      window.removeEventListener('offline', checkOnlineStatus)
+    }
   }, [])
 
-  const saveGoalsToStorage = (updatedGoals: Goal[]) => {
+  // Check for pending sync operations
+  const checkPendingSyncs = () => {
+    setPendingSyncs(syncService.getQueueSize())
+  }
+
+  // Load goals from API
+  const loadGoals = async () => {
+    setLoading(true)
+    try {
+      const data = await api.getGoals()
+      setGoals(data)
+    } catch (error) {
+      console.error('Failed to load goals:', error)
+      // Fallback to localStorage if API fails
+      const savedGoals = localStorage.getItem('fnote_goals')
+      if (savedGoals) setGoals(JSON.parse(savedGoals))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Save goals to localStorage as backup
+  const saveGoalsToBackup = (updatedGoals: Goal[]) => {
     localStorage.setItem('fnote_goals', JSON.stringify(updatedGoals))
   }
 
-  // Get parent goals for dropdown
-  const getParentOptions = (goalType: GoalType) => {
-    const typeIndex = goalTypes.findIndex(t => t.id === goalType)
-    if (typeIndex === 0) return []
-
-    const parentType = goalTypes[typeIndex - 1].id
-    return goals.filter(goal => goal.type === parentType)
+  // Calculate period label based on type and date
+  const calculatePeriodLabel = (type: GoalType, date: string): string => {
+    const d = new Date(date)
+    switch (type) {
+      case 'yearly':
+        return d.getFullYear().toString()
+      case 'quarterly':
+        const quarter = Math.floor(d.getMonth() / 3) + 1
+        return `Q${quarter} ${d.getFullYear()}`
+      case 'monthly':
+        return d.toLocaleString('default', { month: 'long' }) + ' ' + d.getFullYear()
+      case 'weekly':
+        const weekNumber = Math.ceil(d.getDate() / 7)
+        return `Week ${weekNumber}, ${d.toLocaleString('default', { month: 'short' })} ${d.getFullYear()}`
+      default:
+        return ''
+    }
   }
 
-  // Calculate progress from children
-  const calculateProgressFromChildren = (parentId: string): number => {
-    const children = goals.filter(goal => goal.parentId === parentId)
-    if (children.length === 0) return 0
-
-    const totalProgress = children.reduce((sum, child) => sum + child.progress, 0)
-    return Math.round(totalProgress / children.length)
+  // Determine status based on progress
+  const getStatusFromProgress = (progress: number): GoalStatus => {
+    return progress === 0 ? 'not-started' : progress === 100 ? 'completed' : 'in-progress'
   }
 
-  const handleAddGoal = () => {
-    if (!newGoal.title.trim()) return
+  const handleAddGoal = async () => {
+    if (!newGoal.title.trim() || !newGoal.targetDate) return
 
-    // Determine period label
-    let periodLabel = ''
-    if (newGoal.type === 'yearly') {
-      periodLabel = new Date(newGoal.targetDate).getFullYear().toString()
-    } else if (newGoal.type === 'quarterly') {
-      const month = new Date(newGoal.targetDate).getMonth()
-      const quarter = Math.floor(month / 3) + 1
-      periodLabel = `Q${quarter}`
-    } else if (newGoal.type === 'monthly') {
-      periodLabel = new Date(newGoal.targetDate).toLocaleString('default', { month: 'long' })
-    } else {
-      const date = new Date(newGoal.targetDate)
-      const weekNumber = Math.ceil(date.getDate() / 7)
-      periodLabel = `Week ${weekNumber}`
-    }
-
-    const getStatusFromProgress = (progress: number): GoalStatus => {
-      if (progress === 0) return 'not-started'
-      if (progress === 100) return 'completed'
-      return 'in-progress'
-    }
-
-    const goal: Goal = {
-      id: Date.now().toString(),
+    const periodLabel = newGoal.periodLabel || calculatePeriodLabel(newGoal.type, newGoal.targetDate)
+    const status = getStatusFromProgress(newGoal.progress)
+    
+    const goalData = {
       title: newGoal.title,
       description: newGoal.description,
       type: newGoal.type,
       targetDate: newGoal.targetDate,
       progress: newGoal.progress,
-      status: getStatusFromProgress(newGoal.progress),
+      status: status,
       parentId: newGoal.parentId,
-      periodLabel,
-      createdAt: new Date()
+      periodLabel
     }
 
-    const updatedGoals = [goal, ...goals]
-    setGoals(updatedGoals)
-    saveGoalsToStorage(updatedGoals)
+    try {
+      if (isOnline) {
+        const createdGoal = await api.createGoal(goalData)
+        const updatedGoals = [createdGoal, ...goals]
+        setGoals(updatedGoals)
+        saveGoalsToBackup(updatedGoals)
+      } else {
+        // Offline: add to sync queue and localStorage
+        const localGoal: Goal = {
+          id: Date.now().toString(),
+          ...goalData,
+          createdAt: new Date(),
+        }
+        
+        const updatedGoals = [localGoal, ...goals]
+        setGoals(updatedGoals)
+        saveGoalsToBackup(updatedGoals)
+        
+        // Add to sync queue
+        syncService.addToQueue({
+          type: 'CREATE',
+          entityType: 'goal',
+          entityId: localGoal.id,
+          data: goalData
+        })
+        checkPendingSyncs()
+      }
 
-    // Update parent progress
-    if (goal.parentId) {
-      updateParentProgress(goal.parentId, updatedGoals)
+      // Reset form
+      setNewGoal({
+        title: '',
+        description: '',
+        type: 'yearly',
+        targetDate: new Date().toISOString().split('T')[0],
+        progress: 0,
+        parentId: null,
+        periodLabel: ''
+      })
+      setSelectedParent(null)
+    } catch (error) {
+      console.error('Failed to save goal:', error)
+      alert('Failed to save goal. Please try again.')
     }
+  }
 
-    // Reset form
-    setNewGoal({ 
-      title: '', 
-      description: '', 
-      type: 'yearly', 
-      targetDate: new Date().toISOString().split('T')[0], 
-      progress: 0,
-      parentId: null
-    })
-    setSelectedParent(null)
-    setExpandedGoalId(goal.parentId || goal.id)
+  const handleDeleteGoal = async (id: string) => {
+    try {
+      if (isOnline) {
+        await api.deleteGoal(id)
+        const updatedGoals = goals.filter(goal => goal.id !== id)
+        setGoals(updatedGoals)
+        saveGoalsToBackup(updatedGoals)
+      } else {
+        // Offline: mark for deletion in sync queue
+        const goalToDelete = goals.find(goal => goal.id === id)
+        if (goalToDelete) {
+          const updatedGoals = goals.filter(goal => goal.id !== id)
+          setGoals(updatedGoals)
+          saveGoalsToBackup(updatedGoals)
+          
+          syncService.addToQueue({
+            type: 'DELETE',
+            entityType: 'goal',
+            entityId: id,
+            data: goalToDelete
+          })
+          checkPendingSyncs()
+        }
+      }
+      
+      if (expandedGoalId === id) setExpandedGoalId(null)
+    } catch (error) {
+      console.error('Failed to delete goal:', error)
+    }
   }
 
   const handleEditGoal = (goal: Goal) => {
@@ -135,320 +214,147 @@ export default function GoalsPage() {
       title: goal.title,
       description: goal.description,
       type: goal.type,
-      targetDate: goal.targetDate,
+      targetDate: goal.targetDate.split('T')[0],
       progress: goal.progress,
-      parentId: goal.parentId
+      parentId: goal.parentId,
+      periodLabel: goal.periodLabel
     })
-    setSelectedParent(goal.parentId)
-    setExpandedGoalId(goal.id)
+    if (goal.parentId) setSelectedParent(goal.parentId)
   }
 
-  const handleUpdateGoal = () => {
-    if (!editingGoal || !newGoal.title.trim()) return
+  const handleUpdateGoal = async () => {
+    if (!editingGoal || !newGoal.title.trim() || !newGoal.targetDate) return
 
-    const getStatusFromProgress = (progress: number): GoalStatus => {
-      if (progress === 0) return 'not-started'
-      if (progress === 100) return 'completed'
-      return 'in-progress'
-    }
-
-    const updatedGoal: Goal = {
-      ...editingGoal,
+    const periodLabel = newGoal.periodLabel || calculatePeriodLabel(newGoal.type, newGoal.targetDate)
+    const status = getStatusFromProgress(newGoal.progress)
+    
+    const updateData = {
       title: newGoal.title,
       description: newGoal.description,
       type: newGoal.type,
       targetDate: newGoal.targetDate,
       progress: newGoal.progress,
-      status: getStatusFromProgress(newGoal.progress),
-      parentId: newGoal.parentId
+      status: status,
+      parentId: newGoal.parentId,
+      periodLabel
     }
 
-    const updatedGoals = goals.map(goal => 
-      goal.id === editingGoal.id ? updatedGoal : goal
-    )
-
-    setGoals(updatedGoals)
-    saveGoalsToStorage(updatedGoals)
-
-    // Update parent progress
-    if (updatedGoal.parentId) {
-      updateParentProgress(updatedGoal.parentId, updatedGoals)
-    }
-
-    setEditingGoal(null)
-    setNewGoal({ 
-      title: '', 
-      description: '', 
-      type: 'yearly', 
-      targetDate: new Date().toISOString().split('T')[0], 
-      progress: 0,
-      parentId: null
-    })
-    setSelectedParent(null)
-  }
-
-  const updateParentProgress = (parentId: string, goalsList: Goal[]) => {
-    const parentProgress = calculateProgressFromChildren(parentId)
-    
-    const getStatusFromProgress = (progress: number): GoalStatus => {
-      if (progress === 0) return 'not-started'
-      if (progress === 100) return 'completed'
-      return 'in-progress'
-    }
-    
-    const updated = goalsList.map(g => 
-      g.id === parentId 
-        ? { ...g, progress: parentProgress, status: getStatusFromProgress(parentProgress) }
-        : g
-    )
-    setGoals(updated)
-    saveGoalsToStorage(updated)
-
-    // Recursively update grandparent
-    const parent = updated.find(g => g.id === parentId)
-    if (parent?.parentId) {
-      updateParentProgress(parent.parentId, updated)
-    }
-  }
-
-  const handleDeleteGoal = (id: string) => {
-    const goalToDelete = goals.find(g => g.id === id)
-
-    // Delete goal and all its children
-    const deleteRecursive = (goalId: string): string[] => {
-      const toDelete = [goalId]
-      const children = goals.filter(g => g.parentId === goalId)
-      for (const child of children) {
-        toDelete.push(...deleteRecursive(child.id))
+    try {
+      if (isOnline) {
+        const updatedGoal = await api.updateGoal(editingGoal.id, updateData)
+        const updatedGoals = goals.map(goal =>
+          goal.id === editingGoal.id ? updatedGoal : goal
+        )
+        setGoals(updatedGoals)
+        saveGoalsToBackup(updatedGoals)
+      } else {
+        // Offline: update locally and add to sync queue
+        const localGoal: Goal = {
+          ...editingGoal,
+          ...updateData,
+        }
+        
+        const updatedGoals = goals.map(goal =>
+          goal.id === editingGoal.id ? localGoal : goal
+        )
+        setGoals(updatedGoals)
+        saveGoalsToBackup(updatedGoals)
+        
+        syncService.addToQueue({
+          type: 'UPDATE',
+          entityType: 'goal',
+          entityId: editingGoal.id,
+          data: updateData
+        })
+        checkPendingSyncs()
       }
-      return toDelete
-    }
 
-    const idsToDelete = deleteRecursive(id)
-    const updatedGoals = goals.filter(goal => !idsToDelete.includes(goal.id))
-
-    setGoals(updatedGoals)
-    saveGoalsToStorage(updatedGoals)
-
-    // Update parent progress if exists
-    if (goalToDelete?.parentId) {
-      updateParentProgress(goalToDelete.parentId, updatedGoals)
-    }
-
-    if (editingGoal?.id === id) {
       setEditingGoal(null)
-      setNewGoal({ 
-        title: '', 
-        description: '', 
-        type: 'yearly', 
-        targetDate: new Date().toISOString().split('T')[0], 
+      setNewGoal({
+        title: '',
+        description: '',
+        type: 'yearly',
+        targetDate: new Date().toISOString().split('T')[0],
         progress: 0,
-        parentId: null
+        parentId: null,
+        periodLabel: ''
       })
-    }
-
-    if (expandedGoalId === id) setExpandedGoalId(null)
-  }
-
-  const updateProgress = (id: string, newProgress: number) => {
-    const getStatusFromProgress = (progress: number): GoalStatus => {
-      if (progress === 0) return 'not-started'
-      if (progress === 100) return 'completed'
-      return 'in-progress'
-    }
-    
-    const updated = goals.map(goal =>
-      goal.id === id
-        ? { 
-            ...goal, 
-            progress: newProgress, 
-            status: getStatusFromProgress(newProgress)
-          }
-        : goal
-    )
-
-    setGoals(updated)
-    saveGoalsToStorage(updated)
-
-    // Update parent and ancestors
-    const goal = updated.find(g => g.id === id)
-    if (goal?.parentId) {
-      updateParentProgress(goal.parentId, updated)
+      setSelectedParent(null)
+    } catch (error) {
+      console.error('Failed to update goal:', error)
     }
   }
 
-  // Get child goals
-  const getChildGoals = (parentId: string) => {
-    return goals
-      .filter(goal => goal.parentId === parentId)
-      .sort((a, b) => a.periodLabel.localeCompare(b.periodLabel))
+  const toggleExpandGoal = (id: string) => {
+    setExpandedGoalId(expandedGoalId === id ? null : id)
   }
+
+  const handleSyncNow = async () => {
+    try {
+      await syncService.syncIfOnline()
+      checkPendingSyncs()
+      loadGoals() // Reload goals after sync
+    } catch (error) {
+      console.error('Sync failed:', error)
+    }
+  }
+
+  const getTopLevelGoals = () => goals.filter(goal => !goal.parentId)
+  const getChildGoals = (parentId: string) => goals.filter(goal => goal.parentId === parentId)
 
   const filteredGoals = activeType === 'all' 
-    ? goals.filter(goal => !goal.parentId)
-    : goals.filter(g => g.type === activeType)
+    ? getTopLevelGoals() 
+    : getTopLevelGoals().filter(goal => goal.type === activeType)
+
+  const getProgressColor = (progress: number) => {
+    if (progress === 0) return 'bg-gray-600'
+    if (progress < 30) return 'bg-red-600'
+    if (progress < 70) return 'bg-yellow-600'
+    return 'bg-green-600'
+  }
 
   const getStatusColor = (status: GoalStatus) => {
     switch (status) {
-      case 'completed': return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-      case 'in-progress': return 'bg-blue-500/20 text-blue-400 border-blue-500/30'
-      default: return 'bg-gray-500/20 text-gray-400 border-gray-500/30'
+      case 'not-started': return 'bg-gray-500'
+      case 'in-progress': return 'bg-blue-500'
+      case 'completed': return 'bg-green-500'
+      default: return 'bg-gray-500'
     }
   }
 
-  const toggleExpandGoal = (goalId: string) => {
-    setExpandedGoalId(expandedGoalId === goalId ? null : goalId)
-  }
-
-  const GoalCard = ({ goal, depth = 0 }: { goal: Goal, depth?: number }) => {
-    const typeInfo = goalTypes.find(t => t.id === goal.type)
-    const childGoals = getChildGoals(goal.id)
-    const isExpanded = expandedGoalId === goal.id
-    const canAddChild = typeInfo?.childType !== null
-
-    return (
-      <div className={`mb-3 ${depth > 0 ? 'ml-6' : ''}`}>
-        {/* Goal Card */}
-        <div 
-          className={`bg-[#143b28] border border-[#1f5a3d] rounded-lg p-4 cursor-pointer hover:border-[#d4af37] transition-colors`}
-          onClick={() => toggleExpandGoal(goal.id)}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4 flex-1">
-              <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${typeInfo?.color}`}>
-                <span className="text-lg">{typeInfo?.emoji}</span>
-              </div>
-
-              <div className="flex-1">
-                <h3 className="font-semibold text-white">{goal.title}</h3>
-                <div className="flex items-center gap-3 text-sm text-gray-300 mt-1">
-                  <span>{typeInfo?.name}</span>
-                  <span>•</span>
-                  <span>{goal.periodLabel}</span>
-                </div>
-              </div>
-            </div>
-            
-            <div className="flex items-center gap-4">
-              <div className="flex flex-col items-end">
-                <div className="text-right">
-                  <span className="text-lg font-bold text-[#d4af37]">{goal.progress}%</span>
-                </div>
-                <div className="w-32 h-2 bg-[#0f2e1f] rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-[#d4af37]"
-                    style={{ width: `${goal.progress}%` }}
-                  />
-                </div>
-              </div>
-              
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleEditGoal(goal)
-                }}
-                className="px-3 py-1 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg border border-blue-500/30 text-sm transition"
-              >
-                Edit
-              </button>
-              
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (confirm(`Delete "${goal.title}" and all its sub-goals?`)) {
-                    handleDeleteGoal(goal.id)
-                  }
-                }}
-                className="px-3 py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg border border-red-500/30 text-sm transition"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-
-          {goal.description && (
-            <p className="text-gray-300 text-sm mt-3">{goal.description}</p>
-          )}
-
-          <div className="flex items-center justify-between mt-4">
-            <div className="flex items-center gap-2">
-              <span className={`text-xs px-2 py-1 rounded-full border ${getStatusColor(goal.status)}`}>
-                {goal.status}
-              </span>
-              <span className="text-xs text-gray-400">
-                Target: {new Date(goal.targetDate).toLocaleDateString()}
-              </span>
-            </div>
-            
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-400">
-                {childGoals.length} child{childGoals.length !== 1 ? 'ren' : ''}
-              </span>
-              <span className="text-gray-500">
-                {isExpanded ? '▲' : '▼'}
-              </span>
-            </div>
-          </div>
-
-          {/* Progress Slider */}
-          <div className="mt-4 flex items-center gap-3">
-            <span className="text-sm text-gray-300">Progress:</span>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={goal.progress}
-              onChange={(e) => {
-                e.stopPropagation()
-                updateProgress(goal.id, parseInt(e.target.value))
-              }}
-              onClick={(e) => e.stopPropagation()}
-              className="flex-1"
-            />
-            <span className="text-sm text-gray-300 w-10 text-right">
-              {goal.progress}%
-            </span>
-          </div>
-        </div>
-
-        {/* Child Goals */}
-        {isExpanded && childGoals.length > 0 && (
-          <div className="mt-2">
-            {childGoals.map(child => (
-              <GoalCard key={child.id} goal={child} depth={depth + 1} />
-            ))}
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  const handleBackToDashboard = () => {
-    window.location.href = '/dashboard'
-  }
-
   return (
-    <div className="min-h-screen bg-[#0f2e1f] text-white px-4 py-6">
+    <div className="min-h-screen flex flex-col bg-[#0f2e1f] text-white px-4 py-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-[#d4af37]">🎯 Goals</h1>
-          <p className="text-gray-300 text-sm">
-            Set and track your goals hierarchically
-          </p>
+          <p className="text-gray-300 text-sm">Set and track your goals</p>
+          <div className="flex items-center gap-4 mt-2">
+            <div className={`px-2 py-1 rounded text-xs ${isOnline ? 'bg-green-600' : 'bg-red-600'}`}>
+              {isOnline ? '🟢 Online' : '🔴 Offline'}
+            </div>
+            {pendingSyncs > 0 && (
+              <button
+                onClick={handleSyncNow}
+                className="px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded text-xs flex items-center gap-1"
+              >
+                🔄 Sync Pending ({pendingSyncs})
+              </button>
+            )}
+          </div>
         </div>
         <button
-          onClick={handleBackToDashboard}
-          className="px-4 py-2 bg-[#143b28] hover:bg-[#1f5a3d] text-white rounded-lg border border-[#1f5a3d] transition"
+          onClick={() => router.push('/dashboard')}
+          className="text-gray-400 hover:text-white text-sm"
         >
           ← Back to Dashboard
         </button>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-6">
-        {/* Left: Add Goal Form */}
+      <div className="flex flex-col lg:flex-row gap-6 flex-grow">
+        {/* Left: Goal Form */}
         <div className="lg:w-1/3">
-          <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6 mb-6">
+          <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6">
             <h2 className="text-xl font-semibold mb-4 text-[#d4af37]">
               {editingGoal ? '✏️ Edit Goal' : '➕ Add New Goal'}
             </h2>
@@ -456,225 +362,302 @@ export default function GoalsPage() {
             <div className="space-y-4">
               <input
                 type="text"
-                placeholder="Goal title"
-                className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white placeholder-gray-400 focus:outline-none focus:border-[#d4af37]"
+                placeholder="Goal Title"
                 value={newGoal.title}
-                onChange={e => setNewGoal({...newGoal, title: e.target.value})}
+                onChange={e => setNewGoal({ ...newGoal, title: e.target.value })}
+                className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white placeholder-gray-400 focus:outline-none focus:border-[#d4af37]"
               />
 
               <textarea
                 placeholder="Description (optional)"
+                value={newGoal.description}
+                onChange={e => setNewGoal({ ...newGoal, description: e.target.value })}
                 rows={3}
                 className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white placeholder-gray-400 focus:outline-none focus:border-[#d4af37]"
-                value={newGoal.description}
-                onChange={e => setNewGoal({...newGoal, description: e.target.value})}
               />
 
-              <div>
-                <label className="block text-sm text-gray-300 mb-2">Type</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {goalTypes.map(type => (
-                    <button
-                      key={type.id}
-                      type="button"
-                      onClick={() => setNewGoal({...newGoal, type: type.id})}
-                      className={`px-3 py-2 rounded-lg border text-sm transition ${
-                        newGoal.type === type.id
-                          ? 'bg-[#0f2e1f] border-[#d4af37] text-white'
-                          : 'bg-[#0f2e1f] border-[#1f5a3d] text-gray-400 hover:border-gray-500'
-                      }`}
-                    >
-                      {type.emoji} {type.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <select
+                value={newGoal.type}
+                onChange={e => {
+                  const newType = e.target.value as GoalType
+                  setNewGoal({ 
+                    ...newGoal, 
+                    type: newType,
+                    periodLabel: calculatePeriodLabel(newType, newGoal.targetDate)
+                  })
+                }}
+                className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white focus:outline-none focus:border-[#d4af37]"
+              >
+                {goalTypes.map(type => (
+                  <option key={type.id} value={type.id} className="bg-[#143b28]">
+                    {type.emoji} {type.name}
+                  </option>
+                ))}
+              </select>
 
               <div>
                 <label className="block text-sm text-gray-300 mb-2">Target Date</label>
                 <input
                   type="date"
-                  className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white focus:outline-none focus:border-[#d4af37]"
                   value={newGoal.targetDate}
-                  onChange={e => setNewGoal({...newGoal, targetDate: e.target.value})}
+                  onChange={e => {
+                    setNewGoal({ 
+                      ...newGoal, 
+                      targetDate: e.target.value,
+                      periodLabel: calculatePeriodLabel(newGoal.type, e.target.value)
+                    })
+                  }}
+                  className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white focus:outline-none focus:border-[#d4af37]"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-300 mb-2">Initial Progress (%)</label>
+                <label className="block text-sm text-gray-300 mb-2">
+                  Progress: {newGoal.progress}%
+                </label>
                 <input
                   type="range"
                   min="0"
                   max="100"
                   value={newGoal.progress}
-                  onChange={e => setNewGoal({...newGoal, progress: parseInt(e.target.value)})}
-                  className="w-full"
+                  onChange={e => setNewGoal({ ...newGoal, progress: parseInt(e.target.value) })}
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
                 />
-                <div className="flex justify-between text-sm text-gray-400 mt-1">
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
                   <span>0%</span>
-                  <span>{newGoal.progress}%</span>
+                  <span>50%</span>
                   <span>100%</span>
                 </div>
               </div>
 
-              {newGoal.type !== 'yearly' && (
-                <div>
-                  <label className="block text-sm text-gray-300 mb-2">Parent Goal (optional)</label>
-                  <select
-                    className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white focus:outline-none focus:border-[#d4af37]"
-                    value={selectedParent || ''}
-                    onChange={e => {
-                      const value = e.target.value
-                      setSelectedParent(value || null)
-                      setNewGoal({...newGoal, parentId: value || null})
-                    }}
-                  >
-                    <option value="">No parent</option>
-                    {getParentOptions(newGoal.type).map(parent => (
-                      <option key={parent.id} value={parent.id}>
-                        {parent.title} ({parent.periodLabel})
+              <div>
+                <label className="block text-sm text-gray-300 mb-2">Parent Goal (optional)</label>
+                <select
+                  value={selectedParent || ''}
+                  onChange={e => {
+                    const parentId = e.target.value || null
+                    setSelectedParent(parentId)
+                    setNewGoal({ ...newGoal, parentId })
+                  }}
+                  className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white focus:outline-none focus:border-[#d4af37]"
+                >
+                  <option value="">No parent (top-level goal)</option>
+                  {goals
+                    .filter(goal => goal.type === goalTypes.find(t => t.id === newGoal.type)?.childType)
+                    .map(goal => (
+                      <option key={goal.id} value={goal.id} className="bg-[#143b28]">
+                        {goal.title}
                       </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+                    ))
+                  }
+                </select>
+              </div>
 
-              <div className="flex gap-3">
-                {editingGoal ? (
-                  <>
-                    <button
-                      className="flex-1 bg-[#d4af37] text-black py-3 rounded-lg font-medium hover:bg-[#c9a633] transition"
-                      onClick={handleUpdateGoal}
-                    >
-                      Update Goal
-                    </button>
-                    <button
-                      className="px-4 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition"
-                      onClick={() => {
-                        setEditingGoal(null)
-                        setNewGoal({ 
-                          title: '', 
-                          description: '', 
-                          type: 'yearly', 
-                          targetDate: new Date().toISOString().split('T')[0], 
-                          progress: 0,
-                          parentId: null
-                        })
-                        setSelectedParent(null)
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </>
-                ) : (
+              {editingGoal ? (
+                <div className="flex gap-2">
                   <button
-                    className="w-full bg-[#d4af37] text-black py-3 rounded-lg font-medium hover:bg-[#c9a633] transition"
-                    onClick={handleAddGoal}
+                    onClick={handleUpdateGoal}
+                    className="flex-1 bg-[#d4af37] text-black py-3 rounded-lg font-medium hover:bg-[#c9a633] transition"
                   >
-                    Add Goal
+                    Update Goal
                   </button>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Stats */}
-          <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6">
-            <h2 className="text-xl font-semibold mb-4 text-[#d4af37]">📊 Stats</h2>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="text-center">
-                <div className="text-3xl font-bold text-[#d4af37]">{goals.length}</div>
-                <div className="text-sm text-gray-300">Total Goals</div>
-              </div>
-              <div className="text-center">
-                <div className="text-3xl font-bold text-emerald-400">
-                  {goals.filter(g => g.status === 'completed').length}
+                  <button
+                    onClick={() => {
+                      setEditingGoal(null)
+                      setNewGoal({
+                        title: '',
+                        description: '',
+                        type: 'yearly',
+                        targetDate: new Date().toISOString().split('T')[0],
+                        progress: 0,
+                        parentId: null,
+                        periodLabel: ''
+                      })
+                      setSelectedParent(null)
+                    }}
+                    className="px-4 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition"
+                  >
+                    Cancel
+                  </button>
                 </div>
-                <div className="text-sm text-gray-300">Completed</div>
-              </div>
-              <div className="text-center">
-                <div className="text-3xl font-bold text-blue-400">
-                  {goals.filter(g => g.status === 'in-progress').length}
-                </div>
-                <div className="text-sm text-gray-300">In Progress</div>
-              </div>
-              <div className="text-center">
-                <div className="text-3xl font-bold text-gray-400">
-                  {goals.filter(g => g.status === 'not-started').length}
-                </div>
-                <div className="text-sm text-gray-300">Not Started</div>
-              </div>
+              ) : (
+                <button
+                  onClick={handleAddGoal}
+                  disabled={!newGoal.title.trim() || !newGoal.targetDate}
+                  className="w-full bg-[#d4af37] text-black py-3 rounded-lg font-medium hover:bg-[#c9a633] transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isOnline ? 'Save Goal' : 'Save Locally (Offline)'}
+                </button>
+              )}
             </div>
           </div>
         </div>
 
         {/* Right: Goals List */}
         <div className="lg:w-2/3">
-          <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6 mb-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold text-[#d4af37]">🎯 Your Goals</h2>
-              <div className="flex gap-2">
+          {/* Type Filter */}
+          <div className="mb-6">
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setActiveType('all')}
+                className={`px-4 py-2 rounded-lg ${activeType === 'all' ? 'bg-[#d4af37] text-black' : 'bg-[#143b28] text-white border border-[#1f5a3d]'}`}
+              >
+                All Goals
+              </button>
+              {goalTypes.map(type => (
                 <button
-                  onClick={() => setActiveType('all')}
-                  className={`px-3 py-1 rounded-lg text-sm transition ${
-                    activeType === 'all'
-                      ? 'bg-[#d4af37] text-black'
-                      : 'bg-[#0f2e1f] border border-[#1f5a3d] text-gray-300 hover:border-gray-500'
-                  }`}
+                  key={type.id}
+                  onClick={() => setActiveType(type.id)}
+                  className={`px-4 py-2 rounded-lg flex items-center gap-2 ${activeType === type.id ? 'bg-[#d4af37] text-black' : 'bg-[#143b28] text-white border border-[#1f5a3d]'}`}
                 >
-                  All
+                  <span>{type.emoji}</span>
+                  <span>{type.name}</span>
                 </button>
-                {goalTypes.map(type => (
-                  <button
-                    key={type.id}
-                    onClick={() => setActiveType(type.id)}
-                    className={`px-3 py-1 rounded-lg text-sm transition ${
-                      activeType === type.id
-                        ? 'bg-[#d4af37] text-black'
-                        : 'bg-[#0f2e1f] border border-[#1f5a3d] text-gray-300 hover:border-gray-500'
-                    }`}
-                  >
-                    {type.emoji} {type.name}
-                  </button>
-                ))}
-              </div>
+              ))}
             </div>
-
-            {filteredGoals.length === 0 ? (
-              <div className="text-center py-12">
-                <p className="text-gray-300 mb-2">No goals yet</p>
-                <p className="text-sm text-gray-400">Add your first goal using the form on the left</p>
-              </div>
-            ) : (
-              <div>
-                {filteredGoals.map(goal => (
-                  <GoalCard key={goal.id} goal={goal} />
-                ))}
-              </div>
-            )}
           </div>
 
-          {/* Tips */}
-          <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6">
-            <h3 className="text-lg font-semibold text-[#d4af37] mb-3">💡 Tips</h3>
-            <ul className="text-gray-300 space-y-2">
-              <li className="flex items-start gap-2">
-                <span className="text-[#d4af37]">•</span>
-                <span>Break down yearly goals into quarterly/monthly/weekly sub-goals</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="text-[#d4af37]">•</span>
-                <span>Parent goals automatically update progress based on children</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="text-[#d4af37]">•</span>
-                <span>Use progress sliders to track completion percentage</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="text-[#d4af37]">•</span>
-                <span>Delete a parent goal to remove all its children</span>
-              </li>
-            </ul>
+          {/* Goals List */}
+          <div className="space-y-4">
+            {loading ? (
+              <div className="text-center py-8">
+                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-[#d4af37]"></div>
+                <p className="mt-2 text-gray-300">Loading goals...</p>
+              </div>
+            ) : filteredGoals.length === 0 ? (
+              <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-8 text-center">
+                <p className="text-gray-300">No goals yet</p>
+                <p className="text-gray-400 text-sm mt-1">Create your first goal</p>
+              </div>
+            ) : (
+              filteredGoals.map(goal => {
+                const childGoals = getChildGoals(goal.id)
+                const isExpanded = expandedGoalId === goal.id
+                const goalType = goalTypes.find(t => t.id === goal.type)
+
+                return (
+                  <div key={goal.id} className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <div className={`px-3 py-1 rounded-lg ${goalType?.color} border flex items-center gap-2`}>
+                            <span>{goalType?.emoji}</span>
+                            <span className="text-sm font-medium">{goalType?.name}</span>
+                          </div>
+                          <span className="text-sm text-gray-300">{goal.periodLabel}</span>
+                          <span className={`px-2 py-1 text-xs rounded ${getStatusColor(goal.status)}`}>
+                            {goal.status.replace('-', ' ')}
+                          </span>
+                        </div>
+
+                        <h3 className="text-lg font-semibold text-white mb-1">{goal.title}</h3>
+                        {goal.description && (
+                          <p className="text-gray-300 text-sm mb-3">{goal.description}</p>
+                        )}
+
+                        <div className="flex items-center gap-4 mb-3">
+                          <div className="flex-1">
+                            <div className="flex justify-between text-sm text-gray-300 mb-1">
+                              <span>Progress</span>
+                              <span>{goal.progress}%</span>
+                            </div>
+                            <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                              <div 
+                                className={`h-full ${getProgressColor(goal.progress)} transition-all duration-300`}
+                                style={{ width: `${goal.progress}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                          <span className="text-sm text-gray-300">
+                            Target: {new Date(goal.targetDate).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-2 ml-4">
+                        {childGoals.length > 0 && (
+                          <button
+                            onClick={() => toggleExpandGoal(goal.id)}
+                            className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white rounded-lg text-sm transition"
+                          >
+                            {isExpanded ? 'Hide' : 'Show'} Children ({childGoals.length})
+                          </button>
+                        )}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleEditGoal(goal)}
+                            className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm transition flex-1"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteGoal(goal.id)}
+                            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm transition flex-1"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Child Goals */}
+                    {isExpanded && childGoals.length > 0 && (
+                      <div className="mt-4 pt-4 border-t border-[#1f5a3d]">
+                        <h4 className="text-sm font-medium text-[#d4af37] mb-3">Child Goals:</h4>
+                        <div className="space-y-3">
+                          {childGoals.map(child => {
+                            const childType = goalTypes.find(t => t.id === child.type)
+                            return (
+                              <div key={child.id} className="bg-[#0f2e1f] rounded-lg p-3">
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <span className={`px-2 py-1 text-xs rounded ${childType?.color}`}>
+                                        {childType?.emoji} {childType?.name}
+                                      </span>
+                                      <span className="text-sm text-gray-300">{child.periodLabel}</span>
+                                    </div>
+                                    <h5 className="text-white font-medium">{child.title}</h5>
+                                    <div className="flex items-center gap-4 mt-2">
+                                      <div className="w-24">
+                                        <div className="text-xs text-gray-300 mb-1">Progress: {child.progress}%</div>
+                                        <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                                          <div 
+                                            className={`h-full ${getProgressColor(child.progress)}`}
+                                            style={{ width: `${child.progress}%` }}
+                                          ></div>
+                                        </div>
+                                      </div>
+                                      <span className="text-xs text-gray-300">
+                                        {new Date(child.targetDate).toLocaleDateString()}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => handleEditGoal(child)}
+                                      className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs transition"
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteGoal(child.id)}
+                                      className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs transition"
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })
+            )}
           </div>
         </div>
       </div>

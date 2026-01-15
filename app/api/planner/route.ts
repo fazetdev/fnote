@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
 
     if (process.env.NODE_ENV === 'production' && process.env.POSTGRES_PRISMA_URL) {
       const { prisma } = await import('@/lib/prisma')
-      
+
       // Check if plan exists for this user and date
       const existingPlan = await prisma.dailyPlan.findFirst({
         where: {
@@ -135,5 +135,107 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Error saving planner:', error)
     return NextResponse.json({ error: 'Failed to save planner' }, { status: 500 })
+  }
+}
+
+export async function PUT(request: NextRequest) {
+  try {
+    const user = await getAuthenticatedUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const { searchParams } = new URL(request.url)
+    const id = searchParams.get('id')
+    
+    if (!id) {
+      return NextResponse.json({ error: 'Plan ID is required' }, { status: 400 })
+    }
+
+    const body = await request.json()
+    const { focus, tasks } = body
+
+    if (process.env.NODE_ENV === 'production' && process.env.POSTGRES_PRISMA_URL) {
+      const { prisma } = await import('@/lib/prisma')
+      
+      // Check if plan exists and belongs to user
+      const existingPlan = await prisma.dailyPlan.findFirst({
+        where: { id, userId: user.id }
+      })
+      
+      if (!existingPlan) {
+        return NextResponse.json({ error: 'Plan not found' }, { status: 404 })
+      }
+
+      const plan = await prisma.dailyPlan.update({
+        where: { id },
+        data: {
+          focus: focus !== undefined ? focus : existingPlan.focus,
+          ...(tasks && {
+            tasks: {
+              deleteMany: {},
+              create: tasks
+            }
+          })
+        },
+        include: {
+          tasks: true
+        }
+      })
+      return NextResponse.json(plan)
+    }
+
+    // Mock response
+    const mockPlan = {
+      id,
+      date: new Date().toISOString().split('T')[0],
+      focus: focus || 'Updated focus',
+      userId: user.id,
+      tasks: tasks || [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+
+    return NextResponse.json(mockPlan)
+  } catch (error) {
+    console.error('Error updating planner:', error)
+    return NextResponse.json({ error: 'Failed to update planner' }, { status: 500 })
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const user = await getAuthenticatedUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const { searchParams } = new URL(request.url)
+    const id = searchParams.get('id')
+    
+    if (!id) {
+      return NextResponse.json({ error: 'Plan ID is required' }, { status: 400 })
+    }
+
+    if (process.env.NODE_ENV === 'production' && process.env.POSTGRES_PRISMA_URL) {
+      const { prisma } = await import('@/lib/prisma')
+      
+      // Check if plan exists and belongs to user
+      const existingPlan = await prisma.dailyPlan.findFirst({
+        where: { id, userId: user.id }
+      })
+      
+      if (!existingPlan) {
+        return NextResponse.json({ error: 'Plan not found' }, { status: 404 })
+      }
+
+      await prisma.dailyPlan.delete({
+        where: { id }
+      })
+      
+      return NextResponse.json({ message: 'Plan deleted successfully' })
+    }
+
+    // Mock response
+    return NextResponse.json({ message: 'Plan deleted successfully' })
+  } catch (error) {
+    console.error('Error deleting planner:', error)
+    return NextResponse.json({ error: 'Failed to delete planner' }, { status: 500 })
   }
 }

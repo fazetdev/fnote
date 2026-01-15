@@ -1,6 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { api } from '@/utils/api'
+import { syncService } from '@/utils/sync'
 
 type Note = {
   id: string
@@ -9,6 +11,7 @@ type Note = {
   category: 'ideas' | 'growth' | 'business' | 'work' | 'personal'
   tags: string[]
   createdAt: Date
+  updatedAt: Date
 }
 
 export default function NotebookPage() {
@@ -23,6 +26,8 @@ export default function NotebookPage() {
   const [activeCategory, setActiveCategory] = useState<Note['category'] | 'all'>('all')
   const [editingNote, setEditingNote] = useState<Note | null>(null)
   const [viewingNoteId, setViewingNoteId] = useState<string | null>(null)
+  const [isOnline, setIsOnline] = useState(true)
+  const [pendingSyncs, setPendingSyncs] = useState(0)
 
   const categories: { id: Note['category']; name: string; emoji: string }[] = [
     { id: 'ideas', name: 'Ideas', emoji: '💡' },
@@ -32,46 +37,127 @@ export default function NotebookPage() {
     { id: 'personal', name: 'Personal', emoji: '👤' },
   ]
 
-  // Load notes
+  // Check online status and load notes
   useEffect(() => {
-    const savedNotes = localStorage.getItem('fnote_notes')
-    if (savedNotes) setNotes(JSON.parse(savedNotes))
+    const checkOnlineStatus = () => setIsOnline(navigator.onLine)
+    checkOnlineStatus()
+    
+    window.addEventListener('online', checkOnlineStatus)
+    window.addEventListener('offline', checkOnlineStatus)
+
+    loadNotes()
+    checkPendingSyncs()
+
+    return () => {
+      window.removeEventListener('online', checkOnlineStatus)
+      window.removeEventListener('offline', checkOnlineStatus)
+    }
   }, [])
 
-  // Save notes to localStorage
-  const saveNotesToStorage = (updatedNotes: Note[]) => {
+  // Check for pending sync operations
+  const checkPendingSyncs = () => {
+    setPendingSyncs(syncService.getQueueSize())
+  }
+
+  // Load notes from API
+  const loadNotes = async () => {
+    try {
+      const data = await api.getNotes()
+      setNotes(data)
+    } catch (error) {
+      console.error('Failed to load notes:', error)
+      // Fallback to localStorage if API fails
+      const savedNotes = localStorage.getItem('fnote_notes')
+      if (savedNotes) setNotes(JSON.parse(savedNotes))
+    }
+  }
+
+  // Save notes to localStorage as backup
+  const saveNotesToBackup = (updatedNotes: Note[]) => {
     localStorage.setItem('fnote_notes', JSON.stringify(updatedNotes))
   }
 
-  const handleAddNote = () => {
+  const handleAddNote = async () => {
     if (!newNote.title.trim() || !newNote.content.trim()) return
 
-    const note: Note = {
-      id: Date.now().toString(),
+    const noteData = {
       title: newNote.title,
       content: newNote.content,
       category: newNote.category,
       tags: newNote.tagInput.split(',').map(tag => tag.trim()).filter(tag => tag),
-      createdAt: new Date()
     }
 
-    const updatedNotes = [note, ...notes]
-    setNotes(updatedNotes)
-    saveNotesToStorage(updatedNotes)
+    try {
+      if (isOnline) {
+        const createdNote = await api.createNote(noteData)
+        const updatedNotes = [createdNote, ...notes]
+        setNotes(updatedNotes)
+        saveNotesToBackup(updatedNotes)
+      } else {
+        // Offline: add to sync queue and localStorage
+        const localNote: Note = {
+          id: Date.now().toString(),
+          ...noteData,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        }
+        
+        const updatedNotes = [localNote, ...notes]
+        setNotes(updatedNotes)
+        saveNotesToBackup(updatedNotes)
+        
+        // Add to sync queue
+        syncService.addToQueue({
+          type: 'CREATE',
+          entityType: 'note',
+          entityId: localNote.id,
+          data: noteData
+        })
+        checkPendingSyncs()
+      }
 
-    setNewNote({
-      title: '',
-      content: '',
-      category: 'ideas',
-      tagInput: ''
-    })
+      // Reset form
+      setNewNote({
+        title: '',
+        content: '',
+        category: 'ideas',
+        tagInput: ''
+      })
+    } catch (error) {
+      console.error('Failed to save note:', error)
+      alert('Failed to save note. Please try again.')
+    }
   }
 
-  const handleDeleteNote = (id: string) => {
-    const updatedNotes = notes.filter(note => note.id !== id)
-    setNotes(updatedNotes)
-    saveNotesToStorage(updatedNotes)
-    if (viewingNoteId === id) setViewingNoteId(null)
+  const handleDeleteNote = async (id: string) => {
+    try {
+      if (isOnline) {
+        await api.deleteNote(id)
+        const updatedNotes = notes.filter(note => note.id !== id)
+        setNotes(updatedNotes)
+        saveNotesToBackup(updatedNotes)
+      } else {
+        // Offline: mark for deletion in sync queue
+        const noteToDelete = notes.find(note => note.id === id)
+        if (noteToDelete) {
+          const updatedNotes = notes.filter(note => note.id !== id)
+          setNotes(updatedNotes)
+          saveNotesToBackup(updatedNotes)
+          
+          syncService.addToQueue({
+            type: 'DELETE',
+            entityType: 'note',
+            entityId: id,
+            data: noteToDelete
+          })
+          checkPendingSyncs()
+        }
+      }
+      
+      if (viewingNoteId === id) setViewingNoteId(null)
+    } catch (error) {
+      console.error('Failed to delete note:', error)
+    }
   }
 
   const handleEditNote = (note: Note) => {
@@ -85,35 +171,71 @@ export default function NotebookPage() {
     setViewingNoteId(null)
   }
 
-  const handleUpdateNote = () => {
+  const handleUpdateNote = async () => {
     if (!editingNote || !newNote.title.trim() || !newNote.content.trim()) return
 
-    const updatedNote: Note = {
-      ...editingNote,
+    const updateData = {
       title: newNote.title,
       content: newNote.content,
       category: newNote.category,
-      tags: newNote.tagInput.split(',').map(tag => tag.trim()).filter(tag => tag)
+      tags: newNote.tagInput.split(',').map(tag => tag.trim()).filter(tag => tag),
     }
 
-    const updatedNotes = notes.map(note => 
-      note.id === editingNote.id ? updatedNote : note
-    )
-    
-    setNotes(updatedNotes)
-    saveNotesToStorage(updatedNotes)
-    
-    setEditingNote(null)
-    setNewNote({
-      title: '',
-      content: '',
-      category: 'ideas',
-      tagInput: ''
-    })
+    try {
+      if (isOnline) {
+        const updatedNote = await api.updateNote(editingNote.id, updateData)
+        const updatedNotes = notes.map(note =>
+          note.id === editingNote.id ? updatedNote : note
+        )
+        setNotes(updatedNotes)
+        saveNotesToBackup(updatedNotes)
+      } else {
+        // Offline: update locally and add to sync queue
+        const localNote: Note = {
+          ...editingNote,
+          ...updateData,
+          updatedAt: new Date()
+        }
+        
+        const updatedNotes = notes.map(note =>
+          note.id === editingNote.id ? localNote : note
+        )
+        setNotes(updatedNotes)
+        saveNotesToBackup(updatedNotes)
+        
+        syncService.addToQueue({
+          type: 'UPDATE',
+          entityType: 'note',
+          entityId: editingNote.id,
+          data: updateData
+        })
+        checkPendingSyncs()
+      }
+
+      setEditingNote(null)
+      setNewNote({
+        title: '',
+        content: '',
+        category: 'ideas',
+        tagInput: ''
+      })
+    } catch (error) {
+      console.error('Failed to update note:', error)
+    }
   }
 
   const toggleViewNote = (id: string) => {
     setViewingNoteId(viewingNoteId === id ? null : id)
+  }
+
+  const handleSyncNow = async () => {
+    try {
+      await syncService.syncIfOnline()
+      checkPendingSyncs()
+      loadNotes() // Reload notes after sync
+    } catch (error) {
+      console.error('Sync failed:', error)
+    }
   }
 
   const filteredNotes = activeCategory === 'all' ? notes : notes.filter(note => note.category === activeCategory)
@@ -125,6 +247,19 @@ export default function NotebookPage() {
         <div>
           <h1 className="text-2xl font-bold text-[#d4af37]">📓 Notebook</h1>
           <p className="text-gray-300 text-sm">Save and organize notes</p>
+          <div className="flex items-center gap-4 mt-2">
+            <div className={`px-2 py-1 rounded text-xs ${isOnline ? 'bg-green-600' : 'bg-red-600'}`}>
+              {isOnline ? '🟢 Online' : '🔴 Offline'}
+            </div>
+            {pendingSyncs > 0 && (
+              <button
+                onClick={handleSyncNow}
+                className="px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded text-xs flex items-center gap-1"
+              >
+                🔄 Sync Pending ({pendingSyncs})
+              </button>
+            )}
+          </div>
         </div>
         <button
           onClick={() => router.push('/dashboard')}
@@ -141,7 +276,7 @@ export default function NotebookPage() {
             <h2 className="text-xl font-semibold mb-4 text-[#d4af37]">
               {editingNote ? '✏️ Edit Note' : '➕ Add New Note'}
             </h2>
-            
+
             <div className="space-y-4">
               <input
                 type="text"
@@ -200,9 +335,10 @@ export default function NotebookPage() {
               ) : (
                 <button
                   onClick={handleAddNote}
-                  className="w-full bg-[#d4af37] text-black py-3 rounded-lg font-medium hover:bg-[#c9a633] transition"
+                  disabled={!newNote.title.trim() || !newNote.content.trim()}
+                  className="w-full bg-[#d4af37] text-black py-3 rounded-lg font-medium hover:bg-[#c9a633] transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Save Note
+                  {isOnline ? 'Save Note' : 'Save Locally (Offline)'}
                 </button>
               )}
             </div>
@@ -244,10 +380,10 @@ export default function NotebookPage() {
               filteredNotes.map(note => {
                 const categoryInfo = categories.find(c => c.id === note.category)
                 const isViewing = viewingNoteId === note.id
-                
+
                 return (
-                  <div 
-                    key={note.id} 
+                  <div
+                    key={note.id}
                     className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-4 hover:border-[#d4af37] transition-colors"
                   >
                     <div className="flex items-center justify-between">
@@ -255,7 +391,7 @@ export default function NotebookPage() {
                         <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${categoryInfo?.id === 'ideas' ? 'bg-blue-500/20' : categoryInfo?.id === 'growth' ? 'bg-green-500/20' : categoryInfo?.id === 'business' ? 'bg-purple-500/20' : categoryInfo?.id === 'work' ? 'bg-yellow-500/20' : 'bg-pink-500/20'}`}>
                           <span className="text-lg">{categoryInfo?.emoji}</span>
                         </div>
-                        
+
                         <div className="flex-1">
                           <h3 className="text-lg font-semibold text-white">{note.title}</h3>
                           <div className="flex items-center gap-3 mt-1">
@@ -271,7 +407,7 @@ export default function NotebookPage() {
                         </div>
                       </div>
 
-                      {/* Action Buttons - Toggle View Button */}
+                      {/* Action Buttons */}
                       <div className="flex flex-col gap-2">
                         <button
                           onClick={() => toggleViewNote(note.id)}
@@ -302,7 +438,7 @@ export default function NotebookPage() {
                         <div className="bg-[#0f2e1f] rounded-lg p-4">
                           <h4 className="text-sm font-medium text-[#d4af37] mb-2">Content:</h4>
                           <p className="text-gray-300 whitespace-pre-line">{note.content}</p>
-                          
+
                           {note.tags.length > 0 && (
                             <div className="mt-4">
                               <h4 className="text-sm font-medium text-[#d4af37] mb-2">Tags:</h4>

@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
 
     if (process.env.NODE_ENV === 'production' && process.env.POSTGRES_PRISMA_URL) {
       const { prisma } = await import('@/lib/prisma')
-      
+
       const where: any = { userId: user.id }
       if (date) where.date = new Date(date)
       if (type) where.type = type
@@ -103,5 +103,102 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Error creating thought:', error)
     return NextResponse.json({ error: 'Failed to create thought' }, { status: 500 })
+  }
+}
+
+export async function PUT(request: NextRequest) {
+  try {
+    const user = await getAuthenticatedUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const { searchParams } = new URL(request.url)
+    const id = searchParams.get('id')
+    
+    if (!id) {
+      return NextResponse.json({ error: 'Thought ID is required' }, { status: 400 })
+    }
+
+    const body = await request.json()
+    const { content, type, mood, tags } = body
+
+    if (process.env.NODE_ENV === 'production' && process.env.POSTGRES_PRISMA_URL) {
+      const { prisma } = await import('@/lib/prisma')
+      
+      // Check if thought exists and belongs to user
+      const existingThought = await prisma.thought.findFirst({
+        where: { id, userId: user.id }
+      })
+      
+      if (!existingThought) {
+        return NextResponse.json({ error: 'Thought not found' }, { status: 404 })
+      }
+
+      const thought = await prisma.thought.update({
+        where: { id },
+        data: {
+          content: content || existingThought.content,
+          type: type || existingThought.type,
+          mood: mood || existingThought.mood,
+          tags: tags || existingThought.tags,
+        }
+      })
+      return NextResponse.json(thought)
+    }
+
+    // Mock response
+    const mockThought = {
+      id,
+      content: content || 'Updated thought',
+      type: type || 'thought',
+      mood: mood || '😊',
+      tags: tags || [],
+      date: new Date().toISOString(),
+      userId: user.id,
+      createdAt: new Date().toISOString()
+    }
+
+    return NextResponse.json(mockThought)
+  } catch (error) {
+    console.error('Error updating thought:', error)
+    return NextResponse.json({ error: 'Failed to update thought' }, { status: 500 })
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const user = await getAuthenticatedUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const { searchParams } = new URL(request.url)
+    const id = searchParams.get('id')
+    
+    if (!id) {
+      return NextResponse.json({ error: 'Thought ID is required' }, { status: 400 })
+    }
+
+    if (process.env.NODE_ENV === 'production' && process.env.POSTGRES_PRISMA_URL) {
+      const { prisma } = await import('@/lib/prisma')
+      
+      // Check if thought exists and belongs to user
+      const existingThought = await prisma.thought.findFirst({
+        where: { id, userId: user.id }
+      })
+      
+      if (!existingThought) {
+        return NextResponse.json({ error: 'Thought not found' }, { status: 404 })
+      }
+
+      await prisma.thought.delete({
+        where: { id }
+      })
+      
+      return NextResponse.json({ message: 'Thought deleted successfully' })
+    }
+
+    // Mock response
+    return NextResponse.json({ message: 'Thought deleted successfully' })
+  } catch (error) {
+    console.error('Error deleting thought:', error)
+    return NextResponse.json({ error: 'Failed to delete thought' }, { status: 500 })
   }
 }

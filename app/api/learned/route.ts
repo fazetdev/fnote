@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
 
     if (process.env.NODE_ENV === 'production' && process.env.POSTGRES_PRISMA_URL) {
       const { prisma } = await import('@/lib/prisma')
-      
+
       const where: any = { userId: user.id }
       if (date) where.date = new Date(date)
       if (category) where.category = category
@@ -103,5 +103,102 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Error creating learned item:', error)
     return NextResponse.json({ error: 'Failed to create learned item' }, { status: 500 })
+  }
+}
+
+export async function PUT(request: NextRequest) {
+  try {
+    const user = await getAuthenticatedUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const { searchParams } = new URL(request.url)
+    const id = searchParams.get('id')
+    
+    if (!id) {
+      return NextResponse.json({ error: 'Learned item ID is required' }, { status: 400 })
+    }
+
+    const body = await request.json()
+    const { title, content, category, tags } = body
+
+    if (process.env.NODE_ENV === 'production' && process.env.POSTGRES_PRISMA_URL) {
+      const { prisma } = await import('@/lib/prisma')
+      
+      // Check if item exists and belongs to user
+      const existingItem = await prisma.learnedItem.findFirst({
+        where: { id, userId: user.id }
+      })
+      
+      if (!existingItem) {
+        return NextResponse.json({ error: 'Learned item not found' }, { status: 404 })
+      }
+
+      const learnedItem = await prisma.learnedItem.update({
+        where: { id },
+        data: {
+          title: title || existingItem.title,
+          content: content || existingItem.content,
+          category: category || existingItem.category,
+          tags: tags || existingItem.tags,
+        }
+      })
+      return NextResponse.json(learnedItem)
+    }
+
+    // Mock response
+    const mockLearned = {
+      id,
+      title: title || 'Updated item',
+      content: content || 'Updated content...',
+      category: category || 'general',
+      tags: tags || [],
+      date: new Date().toISOString(),
+      userId: user.id,
+      createdAt: new Date().toISOString()
+    }
+
+    return NextResponse.json(mockLearned)
+  } catch (error) {
+    console.error('Error updating learned item:', error)
+    return NextResponse.json({ error: 'Failed to update learned item' }, { status: 500 })
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const user = await getAuthenticatedUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const { searchParams } = new URL(request.url)
+    const id = searchParams.get('id')
+    
+    if (!id) {
+      return NextResponse.json({ error: 'Learned item ID is required' }, { status: 400 })
+    }
+
+    if (process.env.NODE_ENV === 'production' && process.env.POSTGRES_PRISMA_URL) {
+      const { prisma } = await import('@/lib/prisma')
+      
+      // Check if item exists and belongs to user
+      const existingItem = await prisma.learnedItem.findFirst({
+        where: { id, userId: user.id }
+      })
+      
+      if (!existingItem) {
+        return NextResponse.json({ error: 'Learned item not found' }, { status: 404 })
+      }
+
+      await prisma.learnedItem.delete({
+        where: { id }
+      })
+      
+      return NextResponse.json({ message: 'Learned item deleted successfully' })
+    }
+
+    // Mock response
+    return NextResponse.json({ message: 'Learned item deleted successfully' })
+  } catch (error) {
+    console.error('Error deleting learned item:', error)
+    return NextResponse.json({ error: 'Failed to delete learned item' }, { status: 500 })
   }
 }
