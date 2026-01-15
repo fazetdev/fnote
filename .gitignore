@@ -41,3 +41,8 @@ yarn-error.log*
 next-env.d.ts
 lib/prisma.ts.backup
 scripts/test-db.js
+app/api/notes/route.ts.backup
+test-connection.js
+test-frontend-api.js
+test-prisma.js
+utils/
