@@ -76,33 +76,46 @@ export async function POST(request: NextRequest) {
     if (process.env.NODE_ENV === 'production' && process.env.POSTGRES_PRISMA_URL) {
       const { prisma } = await import('@/lib/prisma')
       
-      // Upsert: Update if exists, create if not
-      const plan = await prisma.dailyPlan.upsert({
+      // Check if plan exists for this user and date
+      const existingPlan = await prisma.dailyPlan.findFirst({
         where: {
-          userId_date: {
-            userId: user.id,
-            date: new Date(date)
-          }
-        },
-        update: {
-          focus,
-          tasks: {
-            deleteMany: {}, // Remove existing tasks
-            create: tasks || []
-          }
-        },
-        create: {
-          date: new Date(date),
-          focus: focus || '',
           userId: user.id,
-          tasks: {
-            create: tasks || []
-          }
-        },
-        include: {
-          tasks: true
+          date: new Date(date)
         }
       })
+
+      let plan
+      if (existingPlan) {
+        // Update existing plan
+        plan = await prisma.dailyPlan.update({
+          where: { id: existingPlan.id },
+          data: {
+            focus,
+            tasks: {
+              deleteMany: {}, // Remove existing tasks
+              create: tasks || []
+            }
+          },
+          include: {
+            tasks: true
+          }
+        })
+      } else {
+        // Create new plan
+        plan = await prisma.dailyPlan.create({
+          data: {
+            date: new Date(date),
+            focus: focus || '',
+            userId: user.id,
+            tasks: {
+              create: tasks || []
+            }
+          },
+          include: {
+            tasks: true
+          }
+        })
+      }
 
       return NextResponse.json(plan, { status: 201 })
     }

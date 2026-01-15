@@ -7,14 +7,14 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("POSTGRES_PRISMA_URL")  // Changed from DATABASE_URL
+  url      = env("POSTGRES_PRISMA_URL")
 }
 
 // User model
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
-  password  String   // Hashed password
+  password  String   // Hashed password for fallback
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   
@@ -24,8 +24,27 @@ model User {
   plans     DailyPlan[]
   thoughts  Thought[]
   learned   LearnedItem[]
+  passkeys  Passkey[]  // Added for WebAuthn
   
   @@map("users")
+}
+
+// Passkey model for WebAuthn authentication
+model Passkey {
+  id              String   @id @default(cuid())
+  credentialId    String   @unique
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  publicKey       String   // Base64 encoded public key
+  counter         Int      @default(0)
+  deviceType      String   // "platform" or "cross-platform"
+  transports      String[] // ["usb", "nfc", "ble", "internal"]
+  createdAt       DateTime @default(now())
+  lastUsedAt      DateTime @updatedAt
+  
+  @@map("passkeys")
+  @@index([userId])
+  @@index([credentialId])
 }
 
 // Note model (for Notebook)
