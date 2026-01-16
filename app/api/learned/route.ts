@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const MOCK_USER_ID = 'mock-user-id'
-
-async function getAuthenticatedUser() {
-  return { id: MOCK_USER_ID, email: 'test@example.com' }
+async function getAuthenticatedUser(request: NextRequest) {
+  try {
+    const userData = request.headers.get('x-user-data')
+    if (userData) return JSON.parse(userData)
+    return null
+  } catch {
+    return null
+  }
 }
 
 export async function GET(request: NextRequest) {
   try {
-    const user = await getAuthenticatedUser()
+    const user = await getAuthenticatedUser(request)
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { searchParams } = new URL(request.url)
@@ -17,7 +21,6 @@ export async function GET(request: NextRequest) {
 
     if (process.env.NODE_ENV === 'production' && process.env.POSTGRES_PRISMA_URL) {
       const { prisma } = await import('@/lib/prisma')
-
       const where: any = { userId: user.id }
       if (date) where.date = new Date(date)
       if (category) where.category = category
@@ -62,15 +65,14 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await getAuthenticatedUser()
+    const user = await getAuthenticatedUser(request)
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body = await request.json()
-    const { title, content, category = 'general', tags = [] } = body
+    const { title, content, category = 'general', tags = [], date } = body
 
-    if (!title || !content) {
+    if (!title || !content)
       return NextResponse.json({ error: 'Title and content are required' }, { status: 400 })
-    }
 
     if (process.env.NODE_ENV === 'production' && process.env.POSTGRES_PRISMA_URL) {
       const { prisma } = await import('@/lib/prisma')
@@ -80,21 +82,20 @@ export async function POST(request: NextRequest) {
           content,
           category,
           tags,
-          date: new Date(),
+          date: date ? new Date(date) : new Date(),
           userId: user.id
         }
       })
       return NextResponse.json(learnedItem, { status: 201 })
     }
 
-    // Mock response
     const mockLearned = {
       id: Date.now().toString(),
       title,
       content,
       category,
       tags,
-      date: new Date().toISOString(),
+      date: date || new Date().toISOString(),
       userId: user.id,
       createdAt: new Date().toISOString()
     }
@@ -108,30 +109,20 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const user = await getAuthenticatedUser()
+    const user = await getAuthenticatedUser(request)
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
-    
-    if (!id) {
-      return NextResponse.json({ error: 'Learned item ID is required' }, { status: 400 })
-    }
+    if (!id) return NextResponse.json({ error: 'Learned item ID is required' }, { status: 400 })
 
     const body = await request.json()
-    const { title, content, category, tags } = body
+    const { title, content, category, tags, date } = body
 
     if (process.env.NODE_ENV === 'production' && process.env.POSTGRES_PRISMA_URL) {
       const { prisma } = await import('@/lib/prisma')
-      
-      // Check if item exists and belongs to user
-      const existingItem = await prisma.learnedItem.findFirst({
-        where: { id, userId: user.id }
-      })
-      
-      if (!existingItem) {
-        return NextResponse.json({ error: 'Learned item not found' }, { status: 404 })
-      }
+      const existingItem = await prisma.learnedItem.findFirst({ where: { id, userId: user.id } })
+      if (!existingItem) return NextResponse.json({ error: 'Learned item not found' }, { status: 404 })
 
       const learnedItem = await prisma.learnedItem.update({
         where: { id },
@@ -140,19 +131,19 @@ export async function PUT(request: NextRequest) {
           content: content || existingItem.content,
           category: category || existingItem.category,
           tags: tags || existingItem.tags,
+          date: date ? new Date(date) : existingItem.date
         }
       })
       return NextResponse.json(learnedItem)
     }
 
-    // Mock response
     const mockLearned = {
       id,
-      title: title || 'Updated item',
+      title: title || 'Updated title',
       content: content || 'Updated content...',
       category: category || 'general',
       tags: tags || [],
-      date: new Date().toISOString(),
+      date: date || new Date().toISOString(),
       userId: user.id,
       createdAt: new Date().toISOString()
     }
@@ -166,36 +157,22 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const user = await getAuthenticatedUser()
+    const user = await getAuthenticatedUser(request)
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
-    
-    if (!id) {
-      return NextResponse.json({ error: 'Learned item ID is required' }, { status: 400 })
-    }
+    if (!id) return NextResponse.json({ error: 'Learned item ID is required' }, { status: 400 })
 
     if (process.env.NODE_ENV === 'production' && process.env.POSTGRES_PRISMA_URL) {
       const { prisma } = await import('@/lib/prisma')
-      
-      // Check if item exists and belongs to user
-      const existingItem = await prisma.learnedItem.findFirst({
-        where: { id, userId: user.id }
-      })
-      
-      if (!existingItem) {
-        return NextResponse.json({ error: 'Learned item not found' }, { status: 404 })
-      }
+      const existingItem = await prisma.learnedItem.findFirst({ where: { id, userId: user.id } })
+      if (!existingItem) return NextResponse.json({ error: 'Learned item not found' }, { status: 404 })
 
-      await prisma.learnedItem.delete({
-        where: { id }
-      })
-      
+      await prisma.learnedItem.delete({ where: { id } })
       return NextResponse.json({ message: 'Learned item deleted successfully' })
     }
 
-    // Mock response
     return NextResponse.json({ message: 'Learned item deleted successfully' })
   } catch (error) {
     console.error('Error deleting learned item:', error)
