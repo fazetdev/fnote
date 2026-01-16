@@ -1,5 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
+import { api } from '@/utils/api'
+import { syncService } from '@/utils/sync'
 
 type Task = {
   id: string
@@ -27,63 +29,72 @@ export default function PlannerPage() {
   const [mounted, setMounted] = useState(false)
   const [todayDate, setTodayDate] = useState<string>('')
   const [formattedDate, setFormattedDate] = useState<string>('')
+  const [isOnline, setIsOnline] = useState(true)
+  const [pendingSyncs, setPendingSyncs] = useState(0)
 
   useEffect(() => {
     setMounted(true)
-    
-    // Set dates on client only
+    const checkStatus = () => setIsOnline(navigator.onLine)
+    window.addEventListener('online', checkStatus)
+    window.addEventListener('offline', checkStatus)
+
     const now = new Date()
     const todayStr = now.toISOString().split('T')[0]
-    const formatted = now.toLocaleDateString('en-US', {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric'
-    })
-    
     setTodayDate(todayStr)
-    setFormattedDate(formatted)
-    
-    const savedPlans = localStorage.getItem('fnote_plans')
-    if (savedPlans) {
-      try {
-        const parsedPlans = JSON.parse(savedPlans)
-        setPlans(parsedPlans)
-        const found = parsedPlans.find((p: DailyPlan) => p.date === todayStr)
-        if (found) {
-          setTodayPlan(found)
-        } else {
-          setTodayPlan({
-            date: todayStr,
-            focus: '',
-            tasks: []
-          })
-        }
-      } catch (error) {
-        console.error('Error parsing saved plans:', error)
-        setTodayPlan({
-          date: todayStr,
-          focus: '',
-          tasks: []
-        })
-      }
-    } else {
-      setTodayPlan({
-        date: todayStr,
-        focus: '',
-        tasks: []
-      })
+    setFormattedDate(now.toLocaleDateString('en-US', {
+      weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+    }))
+
+    loadPlans(todayStr)
+
+    const interval = setInterval(() => setPendingSyncs(syncService.getQueueSize()), 3000)
+    return () => {
+      window.removeEventListener('online', checkStatus)
+      window.removeEventListener('offline', checkStatus)
+      clearInterval(interval)
     }
   }, [])
 
-  // Save today plan
+  const loadPlans = async (todayStr: string) => {
+    try {
+      const data = await api.getPlans()
+      setPlans(data)
+      localStorage.setItem('fnote_plans', JSON.stringify(data))
+      const found = data.find((p: DailyPlan) => p.date === todayStr)
+      setTodayPlan(found || { date: todayStr, focus: '', tasks: [] })
+    } catch (error) {
+      const saved = localStorage.getItem('fnote_plans')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        setPlans(parsed)
+        const found = parsed.find((p: DailyPlan) => p.date === todayStr)
+        setTodayPlan(found || { date: todayStr, focus: '', tasks: [] })
+      } else {
+        setTodayPlan({ date: todayStr, focus: '', tasks: [] })
+      }
+    }
+  }
+
   useEffect(() => {
     if (!mounted || !todayPlan) return
     const otherPlans = plans.filter(p => p.date !== todayPlan.date)
     const updatedPlans = [...otherPlans, todayPlan]
-    setPlans(updatedPlans)
     localStorage.setItem('fnote_plans', JSON.stringify(updatedPlans))
-  }, [todayPlan, plans, mounted])
+    
+    const syncData = async () => {
+      try {
+        await api.updatePlan(todayPlan)
+      } catch (error) {
+        syncService.addToQueue({
+          type: 'UPDATE',
+          entityType: 'plan', // Fixed: changed from 'planner' to 'plan'
+          entityId: todayPlan.date,
+          data: todayPlan
+        })
+      }
+    }
+    syncData()
+  }, [todayPlan])
 
   const handleAddTask = () => {
     if (!newTask.text.trim() || !todayPlan) return
@@ -115,24 +126,9 @@ export default function PlannerPage() {
     })
   }
 
-  const getPriorityColor = (p: Task['priority']) => {
-    switch(p){
-      case 'high': return 'bg-red-500/20 text-red-400 border-red-500/30'
-      case 'medium': return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-      case 'low': return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-    }
-  }
-
-  const handleBackToDashboard = () => {
-    // Use direct navigation which we know works
-    window.location.href = '/dashboard'
-  }
-
-  const handleAddTaskKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleAddTask()
-    }
+  const handleSyncNow = async () => {
+    await syncService.syncIfOnline()
+    if (todayDate) loadPlans(todayDate)
   }
 
   if (!mounted || !todayPlan) {
@@ -149,23 +145,29 @@ export default function PlannerPage() {
 
   return (
     <div className="min-h-screen bg-[#0f2e1f] text-white px-4 py-6">
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-[#d4af37]">📅 Daily Planner</h1>
-          <p className="text-gray-300 text-sm">
-            {formattedDate}
-          </p>
+          <div className="flex items-center gap-3 mt-1">
+            <p className="text-gray-300 text-sm">{formattedDate}</p>
+            <span className={`text-[10px] px-2 py-0.5 rounded uppercase font-bold ${isOnline ? 'bg-green-600/20 text-green-400 border border-green-500/30' : 'bg-red-600/20 text-red-400 border border-red-500/30'}`}>
+              {isOnline ? '● Online' : '○ Offline'}
+            </span>
+            {pendingSyncs > 0 && (
+              <button onClick={handleSyncNow} className="text-[10px] bg-[#d4af37] text-black px-2 py-0.5 rounded font-bold hover:bg-yellow-500 transition animate-pulse">
+                🔄 SYNC {pendingSyncs}
+              </button>
+            )}
+          </div>
         </div>
         <button
-          onClick={handleBackToDashboard}
+          onClick={() => window.location.href = '/dashboard'}
           className="px-4 py-2 bg-[#143b28] hover:bg-[#1f5a3d] text-white rounded-lg border border-[#1f5a3d] transition"
         >
           ← Back to Dashboard
         </button>
       </div>
 
-      {/* Progress Card */}
       <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-4 mb-6">
         <div className="flex items-center justify-between mb-2">
           <span className="font-medium text-gray-300">Today's Progress</span>
@@ -177,162 +179,77 @@ export default function PlannerPage() {
             style={{width:`${progress}%`}}
           />
         </div>
-        <p className="text-sm text-gray-400 mt-2">
-          {completedTasks} of {totalTasks} tasks completed
-        </p>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-6">
-        {/* Left: Focus & Add Task */}
         <div className="lg:w-1/3 space-y-6">
-          {/* Today's Focus */}
           <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6">
             <h2 className="text-xl font-semibold mb-4 text-[#d4af37]">🎯 Today's Focus</h2>
             <textarea
               rows={4}
               className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white placeholder-gray-400 focus:outline-none focus:border-[#d4af37]"
-              placeholder="What is your main goal for today?"
+              placeholder="What is your main goal?"
               value={todayPlan.focus}
               onChange={e => setTodayPlan({...todayPlan, focus: e.target.value})}
             />
-            <p className="text-sm text-gray-400 mt-2">
-              Write your most important goal for the day
-            </p>
           </div>
 
-          {/* Add Task Form */}
           <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6">
             <h2 className="text-xl font-semibold mb-4 text-[#d4af37]">➕ Add Task</h2>
-
             <div className="space-y-4">
               <input
                 type="text"
-                placeholder="Task description"
-                className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white placeholder-gray-400 focus:outline-none focus:border-[#d4af37]"
+                className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white focus:outline-none"
                 value={newTask.text}
                 onChange={e => setNewTask({...newTask, text: e.target.value})}
-                onKeyDown={handleAddTaskKeyPress}
+                placeholder="Task description"
               />
-
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-300 mb-2">Time</label>
-                  <input
-                    type="time"
-                    className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white focus:outline-none focus:border-[#d4af37]"
-                    value={newTask.time}
-                    onChange={e => setNewTask({...newTask, time: e.target.value})}
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-300 mb-2">Priority</label>
-                  <select
-                    className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white focus:outline-none focus:border-[#d4af37]"
-                    value={newTask.priority}
-                    onChange={e => setNewTask({...newTask, priority: e.target.value as Task['priority']})}
-                  >
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                  </select>
-                </div>
+                <input
+                  type="time"
+                  className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white"
+                  value={newTask.time}
+                  onChange={e => setNewTask({...newTask, time: e.target.value})}
+                />
+                <select
+                  className="w-full px-4 py-3 rounded-lg bg-[#0f2e1f] border border-[#1f5a3d] text-white"
+                  value={newTask.priority}
+                  onChange={e => setNewTask({...newTask, priority: e.target.value as any})}
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
               </div>
-
-              <button
-                className="w-full bg-[#d4af37] text-black py-3 rounded-lg font-medium hover:bg-[#c9a633] transition"
-                onClick={handleAddTask}
-              >
-                Add Task
-              </button>
+              <button className="w-full bg-[#d4af37] text-black py-3 rounded-lg font-medium" onClick={handleAddTask}>Add Task</button>
             </div>
           </div>
         </div>
 
-        {/* Right: Task List */}
         <div className="lg:w-2/3">
           <div className="bg-[#143b28] border border-[#1f5a3d] rounded-xl p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold text-[#d4af37]">📋 Today's Tasks</h2>
-              <span className="text-sm text-gray-400">
-                {todayPlan.tasks.length} task{todayPlan.tasks.length !== 1 ? 's' : ''}
-              </span>
-            </div>
-
-            {todayPlan.tasks.length === 0 ? (
-              <div className="text-center py-12">
-                <p className="text-gray-300 mb-2">No tasks for today</p>
-                <p className="text-sm text-gray-400">Add your first task using the form on the left</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {todayPlan.tasks
-                  .sort((a, b) => a.time.localeCompare(b.time))
-                  .map(task => (
-                    <div
-                      key={task.id}
-                      className={`flex items-start p-4 rounded-lg border ${
-                        task.completed
-                          ? 'bg-[#0f2e1f] border-[#1f5a3d]'
-                          : 'bg-[#0f2e1f] border-[#1f5a3d] hover:border-[#d4af37]'
-                      } transition-colors`}
+            <h2 className="text-xl font-semibold text-[#d4af37] mb-6">📋 Today's Tasks</h2>
+            <div className="space-y-3">
+              {todayPlan.tasks
+                .sort((a, b) => a.time.localeCompare(b.time))
+                .map(task => (
+                  <div key={task.id} className="flex items-start p-4 rounded-lg border bg-[#0f2e1f] border-[#1f5a3d]">
+                    <button
+                      onClick={() => toggleTask(task.id)}
+                      className={`flex-shrink-0 w-6 h-6 rounded-full border mr-4 mt-1 flex items-center justify-center ${task.completed ? 'bg-emerald-500 border-emerald-500' : 'border-gray-500'}`}
                     >
-                      <button
-                        onClick={() => toggleTask(task.id)}
-                        className={`flex-shrink-0 w-6 h-6 rounded-full border flex items-center justify-center mr-4 mt-1 ${
-                          task.completed
-                            ? 'bg-emerald-500 border-emerald-500'
-                            : 'border-gray-500 hover:border-gray-400'
-                        }`}
-                      >
-                        {task.completed && (
-                          <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
-                      </button>
-
-                      <div className="flex-1">
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <p className={`font-medium ${task.completed ? 'text-gray-500 line-through' : 'text-white'}`}>
-                              {task.text}
-                            </p>
-                            <div className="flex items-center gap-3 mt-2">
-                              <span className="text-sm text-gray-400">
-                                ⏰ {task.time}
-                              </span>
-                              <span className={`text-xs px-2 py-1 rounded-full border ${getPriorityColor(task.priority)}`}>
-                                {task.priority}
-                              </span>
-                              <span className="text-xs text-gray-500">
-                                {new Date(task.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => deleteTask(task.id)}
-                            className="text-gray-500 hover:text-red-400 p-1 ml-2"
-                            title="Delete task"
-                          >
-                            🗑️
-                          </button>
-                        </div>
+                      {task.completed && <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>}
+                    </button>
+                    <div className="flex-1">
+                      <p className={`font-medium ${task.completed ? 'text-gray-500 line-through' : 'text-white'}`}>{task.text}</p>
+                      <div className="flex items-center gap-3 mt-2 text-xs text-gray-400">
+                        <span>⏰ {task.time}</span>
+                        <span className="uppercase">{task.priority}</span>
                       </div>
                     </div>
-                  ))}
-              </div>
-            )}
-
-            {/* Tips */}
-            <div className="mt-8 pt-6 border-t border-[#1f5a3d]">
-              <h3 className="text-sm font-medium text-[#d4af37] mb-2">💡 Tips</h3>
-              <ul className="text-sm text-gray-400 space-y-1">
-                <li>• Click the circle to mark tasks complete</li>
-                <li>• Set priorities to focus on important tasks</li>
-                <li>• Plan your day around your main focus</li>
-                <li>• Delete tasks you won't complete</li>
-              </ul>
+                    <button onClick={() => deleteTask(task.id)} className="text-gray-500 hover:text-red-400 ml-2">🗑️</button>
+                  </div>
+                ))}
             </div>
           </div>
         </div>
