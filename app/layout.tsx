@@ -1,30 +1,27 @@
 import './globals.css'
-import ServiceWorkerRegistration from './components/ServiceWorkerRegistration'
-import OfflineIndicator from './components/OfflineIndicator'
-import SyncStatus from './components/SyncStatus'
-import InstallPrompt from './components/InstallPrompt'
 
 export const metadata = {
   title: 'FNote',
-  description: 'Your personal knowledge base - Works offline',
+  description: 'Your personal knowledge base',
+  manifest: '/manifest.json',
+  themeColor: '#0f2e1f',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'FNote',
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <head>
-        <link rel="manifest" href="/manifest.json" />
+        <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="apple-mobile-web-app-title" content="FNote" />
-        <link rel="apple-touch-icon" href="/icon-192.svg" />
       </head>
-      <body>
+      <body className="bg-[#0f2e1f]">
         {children}
-        <OfflineIndicator />
-        <SyncStatus />
-        <InstallPrompt />
-        <ServiceWorkerRegistration />
       </body>
     </html>
   )
