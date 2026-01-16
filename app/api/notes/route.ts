@@ -1,18 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
-// Hardcoded initial user for immediate saving
 const INITIAL_USER_ID = 'init-user-id'
 
-async function getAuthenticatedUser() {
-  return { id: INITIAL_USER_ID, email: 'init@example.com' }
+async function ensureAndGetUser() {
+  return await prisma.user.upsert({
+    where: { id: INITIAL_USER_ID },
+    update: {},
+    create: {
+      id: INITIAL_USER_ID,
+      email: 'init@example.com',
+      password: 'initial-dummy-password', // Added required field
+    },
+  })
 }
 
 export async function GET(request: NextRequest) {
   try {
-    const user = await getAuthenticatedUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
+    const user = await ensureAndGetUser()
     const { searchParams } = new URL(request.url)
     const category = searchParams.get('category')
 
@@ -33,11 +38,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await getAuthenticatedUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
+    const user = await ensureAndGetUser()
     const body = await request.json()
-    const { title, content, category = 'general', tags = [] } = body
+    const { title, content, category = 'ideas', tags = [] } = body
 
     if (!title || !content) {
       return NextResponse.json({ error: 'Title and content are required' }, { status: 400 })
@@ -48,7 +51,7 @@ export async function POST(request: NextRequest) {
         title,
         content,
         category,
-        tags,
+        tags: Array.isArray(tags) ? tags : [],
         userId: user.id
       }
     })
@@ -62,9 +65,7 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const user = await getAuthenticatedUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
+    const user = await ensureAndGetUser()
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
     if (!id) return NextResponse.json({ error: 'Note ID required' }, { status: 400 })
@@ -72,19 +73,13 @@ export async function PUT(request: NextRequest) {
     const body = await request.json()
     const { title, content, category, tags } = body
 
-    const existingNote = await prisma.note.findFirst({
-      where: { id, userId: user.id }
-    })
-
-    if (!existingNote) return NextResponse.json({ error: 'Note not found' }, { status: 404 })
-
     const updatedNote = await prisma.note.update({
-      where: { id },
+      where: { id, userId: user.id },
       data: {
-        title: title || existingNote.title,
-        content: content || existingNote.content,
-        category: category || existingNote.category,
-        tags: tags || existingNote.tags
+        title,
+        content,
+        category,
+        tags
       }
     })
 
@@ -97,20 +92,14 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const user = await getAuthenticatedUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
+    const user = await ensureAndGetUser()
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
     if (!id) return NextResponse.json({ error: 'Note ID required' }, { status: 400 })
 
-    const existingNote = await prisma.note.findFirst({
-      where: { id, userId: user.id }
+    await prisma.note.delete({ 
+      where: { id, userId: user.id } 
     })
-
-    if (!existingNote) return NextResponse.json({ error: 'Note not found' }, { status: 404 })
-
-    await prisma.note.delete({ where: { id } })
     return NextResponse.json({ message: 'Note deleted successfully' })
   } catch (error) {
     console.error('Error deleting note:', error)
