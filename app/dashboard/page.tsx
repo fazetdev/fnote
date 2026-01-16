@@ -8,23 +8,41 @@ export default function DashboardPage() {
   const router = useRouter()
   const [mounted, setMounted] = useState(false)
   const [isOnline, setIsOnline] = useState(true)
+  const [stats, setStats] = useState<Record<string, number>>({})
 
   useEffect(() => {
+    // 1. Mark as mounted to prevent hydration errors
     setMounted(true)
+    
+    // 2. Set initial online status
     setIsOnline(navigator.onLine)
-    
-    const handleOnline = () => setIsOnline(true)
-    const handleOffline = () => setIsOnline(false)
-    
-    window.addEventListener('online', handleOnline)
-    window.addEventListener('offline', handleOffline)
-    
-    // Check authentication - this works offline!
+
+    // 3. Auth Check
     const isLoggedIn = localStorage.getItem('fnote_logged_in') === 'true'
     if (!isLoggedIn) {
       router.push('/')
+      return
     }
-    
+
+    // 4. Load Stats from LocalStorage
+    const keys = ['fnote_notes', 'fnote_goals', 'fnote_plans', 'fnote_thoughts', 'fnote_learned']
+    const newStats: Record<string, number> = {}
+    keys.forEach(key => {
+      try {
+        const data = localStorage.getItem(key)
+        newStats[key] = data ? JSON.parse(data).length : 0
+      } catch {
+        newStats[key] = 0
+      }
+    })
+    setStats(newStats)
+
+    // 5. Event Listeners
+    const handleOnline = () => setIsOnline(true)
+    const handleOffline = () => setIsOnline(false)
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+
     return () => {
       window.removeEventListener('online', handleOnline)
       window.removeEventListener('offline', handleOffline)
@@ -36,181 +54,89 @@ export default function DashboardPage() {
     router.push('/')
   }
 
-  // We need 6 items for a 2x3 grid (2 rows × 3 columns)
+  // Define sections inside to use the stats state safely
   const sections = [
-    { 
-      title: 'Notes', 
-      icon: '📝', 
-      href: '/notebook',
-      color: 'blue',
-      gradient: 'from-blue-500/20 via-blue-600/20 to-blue-700/20',
-      border: 'border-blue-500/40',
-      stat: () => {
-        try {
-          return JSON.parse(localStorage.getItem('fnote_notes') || '[]').length
-        } catch {
-          return 0
-        }
-      }
-    },
-    { 
-      title: 'Goals', 
-      icon: '🎯', 
-      href: '/goals',
-      color: 'purple',
-      gradient: 'from-purple-500/20 via-purple-600/20 to-purple-700/20',
-      border: 'border-purple-500/40',
-      stat: () => {
-        try {
-          return JSON.parse(localStorage.getItem('fnote_goals') || '[]').length
-        } catch {
-          return 0
-        }
-      }
-    },
-    { 
-      title: 'Planner', 
-      icon: '📅', 
-      href: '/planner',
-      color: 'emerald',
-      gradient: 'from-emerald-500/20 via-emerald-600/20 to-emerald-700/20',
-      border: 'border-emerald-500/40',
-      stat: () => {
-        try {
-          return JSON.parse(localStorage.getItem('fnote_plans') || '[]').length
-        } catch {
-          return 0
-        }
-      }
-    },
-    { 
-      title: 'Thoughts', 
-      icon: '💭', 
-      href: '/thoughts',
-      color: 'amber',
-      gradient: 'from-amber-500/20 via-amber-600/20 to-amber-700/20',
-      border: 'border-amber-500/40',
-      stat: () => {
-        try {
-          return JSON.parse(localStorage.getItem('fnote_thoughts') || '[]').length
-        } catch {
-          return 0
-        }
-      }
-    },
-    { 
-      title: 'Learned Today', 
-      icon: '📚', 
-      href: '/learned-today',
-      color: 'pink',
-      gradient: 'from-pink-500/20 via-pink-600/20 to-pink-700/20',
-      border: 'border-pink-500/40',
-      stat: () => {
-        try {
-          return JSON.parse(localStorage.getItem('fnote_learned') || '[]').length
-        } catch {
-          return 0
-        }
-      }
-    },
-    { 
-      title: 'Settings', 
-      icon: '⚙️', 
-      href: '#',
-      color: 'gray',
-      gradient: 'from-gray-500/20 via-gray-600/20 to-gray-700/20',
-      border: 'border-gray-500/40',
-      stat: () => 0
-    }
+    { title: 'Notes', icon: '📝', href: '/notebook', gradient: 'from-blue-500/20', border: 'border-blue-500/40', statKey: 'fnote_notes' },
+    { title: 'Goals', icon: '🎯', href: '/goals', gradient: 'from-purple-500/20', border: 'border-purple-500/40', statKey: 'fnote_goals' },
+    { title: 'Planner', icon: '📅', href: '/planner', gradient: 'from-emerald-500/20', border: 'border-emerald-500/40', statKey: 'fnote_plans' },
+    { title: 'Thoughts', icon: '💭', href: '/thoughts', gradient: 'from-amber-500/20', border: 'border-amber-500/40', statKey: 'fnote_thoughts' },
+    { title: 'Learned Today', icon: '📚', href: '/learned-today', gradient: 'from-pink-500/20', border: 'border-pink-500/40', statKey: 'fnote_learned' },
+    { title: 'Settings', icon: '⚙️', href: '#', gradient: 'from-gray-500/20', border: 'border-gray-500/40', statKey: null }
   ]
 
-  if (!mounted) {
-    return (
-      <div className="min-h-screen bg-[#0f2e1f] flex items-center justify-center">
-        <div className="text-white">Loading...</div>
-      </div>
-    )
-  }
+  // IMPORTANT: For hydration error #423, we must return the exact same thing 
+  // on first render as the server. Since the server can't see localStorage, 
+  // we return null until mounted.
+  if (!mounted) return null
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#0a1f14] via-[#0f2e1f] to-[#0a1f14] text-white p-4">
-      {/* Background effects */}
+    <div className="min-h-screen bg-[#0a1f14] text-white p-4">
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-0 left-0 w-96 h-96 bg-[#d4af37]/5 rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2" />
-        <div className="absolute bottom-0 right-0 w-96 h-96 bg-[#1f5a3d]/10 rounded-full blur-3xl translate-x-1/2 translate-y-1/2" />
+        <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_50%_50%,#1f5a3d_0%,transparent_70%)] opacity-10" />
       </div>
 
-      {/* Header - Minimal */}
-      <div className="relative z-10 max-w-4xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#d4af37]/20 to-[#1f5a3d]/20 backdrop-blur-sm border border-[#d4af37]/30 flex items-center justify-center">
-              <span className="text-xl">📊</span>
+      <div className="relative z-10 max-w-5xl mx-auto py-6">
+        <header className="flex items-center justify-between mb-10">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#d4af37] to-[#aa8d2e] p-[1px]">
+              <div className="w-full h-full rounded-2xl bg-[#0a1f14] flex items-center justify-center text-2xl">⚡</div>
             </div>
             <div>
-              <h1 className="text-xl font-bold text-white">Dashboard</h1>
-              {!isOnline && (
-                <p className="text-yellow-400 text-xs mt-1">🌐 Offline Mode</p>
-              )}
+              <h1 className="text-2xl font-bold tracking-tight">FNote Dashboard</h1>
+              <div className="flex items-center gap-2 mt-1">
+                <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-yellow-500'}`} />
+                <span className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">
+                  {isOnline ? 'Sync Active' : 'Offline Mode'}
+                </span>
+              </div>
             </div>
           </div>
-          
+
           <button
             onClick={handleLogout}
-            className="px-3 py-1.5 text-xs bg-gradient-to-r from-red-600/20 to-red-700/20 hover:from-red-600/30 hover:to-red-700/30 text-red-400 rounded-lg border border-red-500/30 transition-all"
+            className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-[10px] font-black text-red-400 uppercase tracking-widest hover:bg-red-500/20"
           >
             Logout
           </button>
-        </div>
+        </header>
 
-        {/* TRUE 2x3 Grid - 2 rows × 3 columns */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {/* This creates exactly 6 cells in a 2x3 layout */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {sections.map((section) => {
-            const count = section.stat()
+            const count = section.statKey ? stats[section.statKey] || 0 : 0
             const isSettings = section.title === 'Settings'
-            
-            return isSettings ? (
-              // Settings cell (inactive for now)
-              <div
-                key={section.title}
-                className="h-32 rounded-xl border border-dashed border-[#1f5a3d]/40 bg-gradient-to-br from-[#143b28]/40 to-[#0f2e1f]/40 backdrop-blur-sm p-5 flex flex-col items-center justify-center opacity-70"
-              >
-                <div className={`w-12 h-12 rounded-lg bg-gradient-to-br ${section.gradient} border ${section.border} flex items-center justify-center mb-3`}>
-                  <span className="text-2xl opacity-60">{section.icon}</span>
+
+            if (isSettings) {
+              return (
+                <div key={section.title} className="h-40 rounded-3xl border border-white/5 bg-white/[0.02] p-6 flex flex-col justify-between opacity-40">
+                  <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${section.gradient} border ${section.border} flex items-center justify-center text-2xl`}>
+                    {section.icon}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white/70">{section.title}</h3>
+                    <p className="text-[10px] text-white/30 font-medium uppercase tracking-widest">Coming Soon</p>
+                  </div>
                 </div>
-                <h3 className="text-lg font-semibold text-white mb-1 opacity-60">{section.title}</h3>
-                <p className="text-xs text-gray-500 mt-1">Coming soon</p>
-              </div>
-            ) : (
-              // Active section cells
-              <Link
-                key={section.title}
-                href={section.href}
-                className="block"
-              >
-                <div className="h-32 rounded-xl border border-[#1f5a3d]/50 bg-gradient-to-br from-[#143b28]/60 to-[#0f2e1f]/60 backdrop-blur-sm p-5 transition-all duration-300 hover:border-[#d4af37]/50 hover:shadow-xl hover:shadow-black/20 hover:-translate-y-0.5">
-                  
-                  {/* Background gradient */}
-                  <div className={`absolute inset-0 bg-gradient-to-br ${section.gradient} rounded-xl opacity-0 hover:opacity-100 transition-opacity duration-500`} />
-                  
-                  {/* Content */}
-                  <div className="relative z-10 h-full flex flex-col">
-                    <div className="flex items-start justify-between mb-3">
-                      <div className={`w-12 h-12 rounded-lg bg-gradient-to-br ${section.gradient} border ${section.border} flex items-center justify-center`}>
-                        <span className="text-2xl">{section.icon}</span>
-                      </div>
-                      {count > 0 && (
-                        <div className="px-2 py-1 rounded-lg bg-[#d4af37]/20 border border-[#d4af37]/30">
-                          <span className="text-xs font-bold text-[#d4af37]">{count}</span>
-                        </div>
-                      )}
+              )
+            }
+
+            return (
+              <Link key={section.title} href={section.href} className="group h-40 outline-none">
+                <div className="relative h-full rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-md p-6 flex flex-col justify-between transition-all duration-300 group-hover:border-[#d4af37]/40 group-hover:-translate-y-1 group-active:scale-95">
+                  <div className="flex justify-between items-start">
+                    <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${section.gradient} border ${section.border} flex items-center justify-center text-2xl transition-transform group-hover:scale-110`}>
+                      {section.icon}
                     </div>
-                    
-                    <h3 className="text-lg font-semibold text-white mb-1">{section.title}</h3>
-                    
-                    <div className="mt-auto flex items-center justify-between">
-                      <span className="text-xs text-gray-400">Open →</span>
+                    {count > 0 && (
+                      <div className="px-2.5 py-1 rounded-full bg-[#d4af37]/10 border border-[#d4af37]/30 text-[10px] font-black text-[#d4af37]">
+                        {count}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-white group-hover:text-[#d4af37] transition-colors">{section.title}</h3>
+                    <div className="flex items-center gap-2 mt-1">
+                      <div className="h-[1px] w-4 bg-[#d4af37]/40 group-hover:w-8 transition-all duration-500" />
+                      <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest group-hover:text-gray-300">Open Section</span>
                     </div>
                   </div>
                 </div>
@@ -219,22 +145,13 @@ export default function DashboardPage() {
           })}
         </div>
 
-        {/* Offline notice */}
-        {!isOnline && (
-          <div className="mt-6 bg-gradient-to-r from-yellow-500/10 to-transparent rounded-xl p-4 border border-yellow-500/20">
-            <p className="text-yellow-300 text-sm text-center">
-              ⚡ Working offline - Some features may be limited
-            </p>
+        <footer className="mt-12 flex justify-center">
+          <div className="px-6 py-3 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center gap-6 text-[10px] font-bold text-gray-500 uppercase tracking-tighter">
+            <span>Production v1.0.4</span>
+            <div className="w-[1px] h-4 bg-white/10" />
+            <span>Local Storage Active</span>
           </div>
-        )}
-
-        {/* Minimal footer */}
-        <div className="mt-8 pt-4 border-t border-[#1f5a3d]/20">
-          <p className="text-gray-500 text-xs text-center">
-            {isOnline ? 'Online • ' : 'Offline • '}
-            FNote • Local Storage • v1.0
-          </p>
-        </div>
+        </footer>
       </div>
     </div>
   )
