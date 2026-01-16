@@ -6,7 +6,6 @@ import { syncService } from '@/lib/sync'
 export default function SyncStatus() {
   const [pendingCount, setPendingCount] = useState(0)
   const [isSyncing, setIsSyncing] = useState(false)
-  const [lastSynced, setLastSynced] = useState<Date | null>(null)
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
@@ -14,10 +13,10 @@ export default function SyncStatus() {
     
     if (!syncService) return
 
-    // Update pending count
     const updateStatus = () => {
       if (syncService) {
-        setPendingCount(syncService.getPendingCount())
+        const count = syncService.getPendingCount()
+        setPendingCount(count)
       }
       setIsSyncing(false)
     }
@@ -25,22 +24,11 @@ export default function SyncStatus() {
     // Initial update
     updateStatus()
 
-    // Check every 10 seconds
+    // Update every 10 seconds
     const interval = setInterval(updateStatus, 10000)
-
-    // Check on focus
-    const handleFocus = () => {
-      if (navigator.onLine && syncService) {
-        syncService.processQueue()
-        updateStatus()
-      }
-    }
-
-    window.addEventListener('focus', handleFocus)
 
     return () => {
       clearInterval(interval)
-      window.removeEventListener('focus', handleFocus)
     }
   }, [])
 
@@ -54,31 +42,33 @@ export default function SyncStatus() {
 
     setIsSyncing(true)
     await syncService.processQueue()
-    setLastSynced(new Date())
     setIsSyncing(false)
+    
+    // Update count after sync
     if (syncService) {
       setPendingCount(syncService.getPendingCount())
     }
   }
 
-  if (!mounted || (pendingCount === 0 && !lastSynced)) {
+  // Don't show anything if no pending syncs
+  if (!mounted || pendingCount === 0) {
     return null
   }
 
   return (
-    <div className="fixed bottom-4 left-4 z-40">
-      <div className="bg-[#143b28]/90 text-white px-3 py-2 rounded-lg shadow-lg backdrop-blur-sm border border-[#1f5a3d]/50">
+    <div className="fixed bottom-4 left-4 z-40 animate-fade-in">
+      <div className="bg-gradient-to-r from-[#143b28] to-[#1f5a3d] text-white px-3 py-2 rounded-lg shadow-lg border border-[#d4af37]/30">
         <div className="flex items-center gap-2">
           {isSyncing ? (
             <>
-              <span className="text-xs animate-pulse">🔄</span>
-              <span className="text-xs">Syncing...</span>
+              <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <span className="text-xs">Syncing to server...</span>
             </>
-          ) : pendingCount > 0 ? (
+          ) : (
             <>
-              <span className="text-xs">📤</span>
+              <span className="text-xs">📡</span>
               <span className="text-xs">
-                {pendingCount} pending {pendingCount === 1 ? 'change' : 'changes'}
+                {pendingCount} change{pendingCount !== 1 ? 's' : ''} pending
               </span>
               <button
                 onClick={handleManualSync}
@@ -88,14 +78,7 @@ export default function SyncStatus() {
                 Sync now
               </button>
             </>
-          ) : lastSynced ? (
-            <>
-              <span className="text-xs">✅</span>
-              <span className="text-xs">
-                Synced {lastSynced.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </span>
-            </>
-          ) : null}
+          )}
         </div>
       </div>
     </div>

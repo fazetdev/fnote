@@ -6,7 +6,7 @@
   <title>FNote - Offline</title>
   <style>
     body {
-      background: #0f2e1f;
+      background: linear-gradient(135deg, #0a1f14 0%, #0f2e1f 50%, #0a1f14 100%);
       color: white;
       font-family: system-ui, -apple-system, sans-serif;
       display: flex;
@@ -19,22 +19,51 @@
     }
     .container {
       max-width: 400px;
+      background: rgba(20, 59, 40, 0.6);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(31, 90, 61, 0.5);
+      border-radius: 20px;
+      padding: 40px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
     }
     h1 {
       color: #d4af37;
+      font-size: 2.5em;
+      margin-bottom: 20px;
     }
     p {
       color: #ccc;
-      margin: 20px 0;
+      margin: 15px 0;
+      line-height: 1.6;
+    }
+    .icon {
+      font-size: 4em;
+      margin-bottom: 20px;
+    }
+    .button {
+      display: inline-block;
+      background: #d4af37;
+      color: black;
+      padding: 12px 24px;
+      border-radius: 10px;
+      text-decoration: none;
+      font-weight: 600;
+      margin-top: 20px;
+      transition: transform 0.2s;
+    }
+    .button:hover {
+      transform: scale(1.05);
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>📝 FNote</h1>
-    <p>You're offline. Some features may not be available.</p>
-    <p>Your local data is still accessible.</p>
-    <p>Check your connection and try again.</p>
+    <div class="icon">📝</div>
+    <h1>FNote</h1>
+    <p>You're currently offline.</p>
+    <p>Some features may not be available without an internet connection.</p>
+    <p>Your locally stored data is still accessible.</p>
+    <button class="button" onclick="window.location.reload()">Retry Connection</button>
   </div>
 </body>
 </html>

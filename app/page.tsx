@@ -6,21 +6,48 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [isOnline, setIsOnline] = useState(true)
   const router = useRouter()
 
   useEffect(() => {
+    // Check online status
+    setIsOnline(navigator.onLine)
+    
+    const handleOnline = () => setIsOnline(true)
+    const handleOffline = () => setIsOnline(false)
+    
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    
+    // Check if already logged in
     if (localStorage.getItem('fnote_logged_in') === 'true') {
       router.push('/dashboard')
+    }
+    
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
     }
   }, [router])
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault()
+    
+    // If offline, show message but still allow login (local storage works offline)
+    if (!isOnline) {
+      console.log('Offline mode: Using local authentication')
+    }
+    
     setIsLoading(true)
+    
+    // Simulate API delay even offline
     setTimeout(() => {
       if (password === 'fnote123' || password === '1234') {
         localStorage.setItem('fnote_logged_in', 'true')
-        router.push('/dashboard')
+        // Add a small delay for visual feedback
+        setTimeout(() => {
+          router.push('/dashboard')
+        }, 100)
       } else {
         setError('Incorrect password')
         setIsLoading(false)
@@ -28,9 +55,20 @@ export default function LoginPage() {
     }, 300)
   }
 
+  const handleFingerprint = () => {
+    setPassword('1234')
+    setTimeout(() => {
+      const form = document.querySelector('form')
+      if (form) {
+        const submitEvent = new Event('submit', { bubbles: true, cancelable: true })
+        form.dispatchEvent(submitEvent)
+      }
+    }, 50)
+  }
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#0f2e1f] px-4 text-center">
-      
+
       {/* Animated background - subtle enhancement */}
       <div className="absolute inset-0 overflow-hidden opacity-20">
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-[#d4af37]/10 rounded-full blur-3xl animate-pulse" />
@@ -44,6 +82,14 @@ export default function LoginPage() {
         </div>
         <h1 className="text-4xl font-bold text-[#d4af37] mb-2">FNOTE</h1>
         <p className="text-white text-lg">Welcome back Faruk</p>
+        
+        {/* Offline indicator */}
+        {!isOnline && (
+          <div className="mt-2 inline-flex items-center gap-1 px-3 py-1 rounded-full bg-yellow-500/20 border border-yellow-500/30">
+            <span className="text-xs">🌐</span>
+            <span className="text-xs text-yellow-300">Offline Mode</span>
+          </div>
+        )}
       </div>
 
       {/* Login Form - enhanced but same structure */}
@@ -60,6 +106,14 @@ export default function LoginPage() {
               disabled={isLoading}
             />
             {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
+            
+            {/* Offline notice */}
+            {!isOnline && (
+              <p className="text-yellow-400 text-xs">
+                ⚡ Working in offline mode - local authentication only
+              </p>
+            )}
+            
             <button
               type="submit"
               disabled={isLoading}
@@ -68,18 +122,13 @@ export default function LoginPage() {
               {isLoading ? 'Checking…' : 'Log in'}
             </button>
           </form>
-          
-          {/* Fingerprint/Passkey Section - RESTORED */}
+
+          {/* Fingerprint/Passkey Section */}
           <div className="mt-6 pt-6 border-t border-[#1f5a3d]">
             <button
-              onClick={() => {
-                // This would trigger fingerprint/passkey login
-                console.log('Fingerprint login clicked')
-                // For now, just use password '1234' as fallback
-                setPassword('1234')
-                handleLogin(new Event('submit') as any)
-              }}
-              className="w-full rounded-md bg-[#1f5a3d] hover:bg-[#2a6e47] text-white py-3 text-sm font-medium transition-all flex items-center justify-center gap-2"
+              onClick={handleFingerprint}
+              disabled={isLoading}
+              className="w-full rounded-md bg-[#1f5a3d] hover:bg-[#2a6e47] text-white py-3 text-sm font-medium transition-all flex items-center justify-center gap-2 disabled:opacity-60"
             >
               <span className="text-lg">👆</span>
               Login with Fingerprint / Passkey
